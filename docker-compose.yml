@@ -1,0 +1,130 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:15-alpine
+    container_name: tutorconnect-db
+    environment:
+      POSTGRES_DB: tutorconnect_dev
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: password
+      POSTGRES_INITDB_ARGS: "--encoding=UTF-8 --lc-collate=en_US.UTF-8 --lc-ctype=en_US.UTF-8"
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./infra/docker/postgres:/docker-entrypoint-initdb.d
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d tutorconnect_dev"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - tutorconnect
+
+  redis:
+    image: redis:7-alpine
+    container_name: tutorconnect-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    command: redis-server --appendonly yes --requirepass ${REDIS_PASSWORD:-password}
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - tutorconnect
+
+  # Optional: Database admin interface
+  pgadmin:
+    image: dpage/pgadmin4:latest
+    container_name: tutorconnect-pgadmin
+    environment:
+      PGADMIN_DEFAULT_EMAIL: admin@tutorconnect.com
+      PGADMIN_DEFAULT_PASSWORD: admin
+      PGADMIN_CONFIG_SERVER_MODE: 'False'
+    ports:
+      - "5050:80"
+    depends_on:
+      - postgres
+    networks:
+      - tutorconnect
+    profiles:
+      - tools
+
+  # Optional: Email testing
+  mailhog:
+    image: mailhog/mailhog:latest
+    container_name: tutorconnect-mail
+    ports:
+      - "1025:1025" # SMTP
+      - "8025:8025" # Web UI
+    networks:
+      - tutorconnect
+    profiles:
+      - tools
+
+  # API service (for full containerized development)
+  api:
+    build:
+      context: .
+      dockerfile: ./infra/docker/api/Dockerfile
+      target: development
+    container_name: tutorconnect-api
+    environment:
+      - NODE_ENV=development
+      - DATABASE_URL=postgresql://postgres:password@postgres:5432/tutorconnect_dev
+      - REDIS_URL=redis://:password@redis:6379
+      - JWT_SECRET=${JWT_SECRET}
+      - JWT_REFRESH_SECRET=${JWT_REFRESH_SECRET}
+    ports:
+      - "3001:3001"
+    volumes:
+      - ./apps/api:/app
+      - /app/node_modules
+      - /app/dist
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - tutorconnect
+    profiles:
+      - full-stack
+
+  # Web service (for full containerized development)
+  web:
+    build:
+      context: .
+      dockerfile: ./infra/docker/web/Dockerfile
+      target: development
+    container_name: tutorconnect-web
+    environment:
+      - NEXT_PUBLIC_API_URL=http://localhost:3001/api/v1
+      - NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY=${NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY}
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./apps/web:/app
+      - /app/node_modules
+      - /app/.next
+    depends_on:
+      - api
+    networks:
+      - tutorconnect
+    profiles:
+      - full-stack
+
+volumes:
+  postgres_data:
+    driver: local
+  redis_data:
+    driver: local
+
+networks:
+  tutorconnect:
+    driver: bridge 

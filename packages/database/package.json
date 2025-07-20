@@ -1,0 +1,36 @@
+{
+  "name": "@tutorconnect/database",
+  "version": "1.0.0",
+  "description": "Database schema and migrations for TutorConnect",
+  "main": "index.ts",
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "generate": "prisma generate",
+    "migrate": "prisma migrate dev",
+    "migrate:reset": "prisma migrate reset --force",
+    "migrate:deploy": "prisma migrate deploy",
+    "studio": "prisma studio",
+    "seed": "tsx prisma/seed.ts",
+    "setup": "npm run generate && npm run migrate && npm run seed",
+    "reset": "npm run migrate:reset && npm run setup",
+    "deploy": "npm run migrate:deploy && npm run generate",
+    "type-check": "tsc --noEmit",
+    "lint": "eslint . --ext .ts,.js",
+    "clean": "rm -rf dist node_modules/.prisma"
+  },
+  "dependencies": {
+    "@prisma/client": "^5.4.2",
+    "bcryptjs": "^2.4.3"
+  },
+  "devDependencies": {
+    "@types/bcryptjs": "^2.4.4",
+    "@types/node": "^20.8.0",
+    "prisma": "^5.4.2",
+    "tsx": "^3.14.0",
+    "typescript": "^5.2.2"
+  },
+  "prisma": {
+    "seed": "tsx prisma/seed.ts"
+  }
+} 
