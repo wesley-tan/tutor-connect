@@ -391,7 +391,7 @@ router.post('/:id/subjects', authenticateSupabaseToken, requireRole('tutor'), as
 }));
 
 // POST /api/v1/tutors/:id/certifications - Add/update certifications
-router.post('/:id/certifications', authenticateToken, requireRole('tutor'), asyncHandler(async (req: Request, res: Response) => {
+router.post('/:id/certifications', authenticateSupabaseToken, requireRole('tutor'), asyncHandler(async (req: Request, res: Response) => {
   const { user } = req as AuthenticatedRequest;
   const tutorId = req.params.id;
   const { certifications } = z.object({

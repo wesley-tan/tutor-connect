@@ -1,7 +1,7 @@
 import express, { Request, Response } from 'express';
 import { prisma } from '@tutorconnect/database';
 import { asyncHandler, successResponse, paginatedResponse, ValidationError, NotFoundError, ConflictError } from '../middleware/errorHandlers';
-import { authenticateToken, AuthenticatedRequest } from '../utils/auth';
+import { authenticateSupabaseToken, AuthenticatedRequest } from '../utils/supabaseAuth';
 import { z } from 'zod';
 
 const router = express.Router();
@@ -28,7 +28,7 @@ const ReviewFilterSchema = z.object({
 });
 
 // POST /api/v1/reviews - Submit review
-router.post('/', authenticateToken, asyncHandler(async (req: Request, res: Response) => {
+router.post('/', authenticateSupabaseToken, asyncHandler(async (req: Request, res: Response) => {
   const { user } = req as AuthenticatedRequest;
   const { sessionId, rating, reviewText, tags } = CreateReviewSchema.parse(req.body);
 
@@ -96,7 +96,7 @@ router.post('/', authenticateToken, asyncHandler(async (req: Request, res: Respo
 }));
 
 // GET /api/v1/reviews/:sessionId - Get session review
-router.get('/:sessionId', authenticateToken, asyncHandler(async (req: Request, res: Response) => {
+router.get('/:sessionId', authenticateSupabaseToken, asyncHandler(async (req: Request, res: Response) => {
   const { user } = req as AuthenticatedRequest;
   const sessionId = req.params.sessionId;
 
@@ -137,7 +137,7 @@ router.get('/:sessionId', authenticateToken, asyncHandler(async (req: Request, r
 }));
 
 // PUT /api/v1/reviews/:id - Update review
-router.put('/:id', authenticateToken, asyncHandler(async (req: Request, res: Response) => {
+router.put('/:id', authenticateSupabaseToken, asyncHandler(async (req: Request, res: Response) => {
   const { user } = req as AuthenticatedRequest;
   const reviewId = req.params.id;
   const validatedData = UpdateReviewSchema.parse(req.body);
@@ -254,7 +254,7 @@ router.get('/', asyncHandler(async (req: Request, res: Response) => {
 }));
 
 // DELETE /api/v1/reviews/:id - Delete review
-router.delete('/:id', authenticateToken, asyncHandler(async (req: Request, res: Response) => {
+router.delete('/:id', authenticateSupabaseToken, asyncHandler(async (req: Request, res: Response) => {
   const { user } = req as AuthenticatedRequest;
   const reviewId = req.params.id;
 

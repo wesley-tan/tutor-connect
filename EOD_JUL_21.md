@@ -68,7 +68,9 @@
 ## 📝 What Needs to Be Implemented Next
 
 ### High Priority (This Week)
+- [] rn session and messages cannot be accessed, times out and returns back to login
 - [ ] to simplify things, we can allow people to toggle between student and tutor on the dashboard
+- tutors should be able to see all students and vice versa, and tutees should see all tutors
 - [ ] Complete all dashboard subpages: Tutors, Sessions, Messages, Profile
 - [ ] Finish role-based profile management (edit, avatar, preferences)
 - [ ] Implement session booking and calendar

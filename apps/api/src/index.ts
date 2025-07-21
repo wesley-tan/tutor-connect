@@ -30,12 +30,15 @@ import conversationRoutes from './routes/conversations.js';
 import reviewRoutes from './routes/reviews.js';
 import referenceRoutes from './routes/reference.js';
 
+const PORT = process.env.PORT || 3001;
+const NODE_ENV = process.env.NODE_ENV || 'development';
+const FRONTEND_URL = process.env.FRONTEND_URL || 'http://localhost:3000';
+
 // Environment validation
 const requiredEnvVars = [
   'DATABASE_URL',
   'JWT_SECRET',
-  'JWT_REFRESH_SECRET',
-  'REDIS_URL'
+  'JWT_REFRESH_SECRET'
 ];
 
 for (const envVar of requiredEnvVars) {
@@ -45,9 +48,10 @@ for (const envVar of requiredEnvVars) {
   }
 }
 
-const PORT = process.env.PORT || 3001;
-const NODE_ENV = process.env.NODE_ENV || 'development';
-const FRONTEND_URL = process.env.FRONTEND_URL || 'http://localhost:3000';
+// Optional Redis for development
+if (!process.env.REDIS_URL && NODE_ENV === 'development') {
+  logger.warn('Redis URL not provided. Some features may not work properly in development.');
+}
 
 // Initialize Express app
 const app = express();
@@ -173,8 +177,10 @@ app.get('/health', async (req, res) => {
     // Check database connection
     await prisma.$queryRaw`SELECT 1`;
     
-    // Check Redis connection
-    await redis.ping();
+    // Redis is optional - don't fail health check if Redis is not available
+    // if (redis) {
+    //   await redis.ping();
+    // }
     
     res.status(200).json({
       status: 'healthy',
@@ -209,7 +215,7 @@ app.use('/webhooks', webhookRoutes); // Webhooks outside API versioning
 app.use((req: any, res, next) => {
   req.prisma = prisma;
   req.eventBus = eventBus;
-  req.redis = redis;
+  req.redis = redis || null;
   req.io = io;
   next();
 });
@@ -229,8 +235,10 @@ const gracefulShutdown = async (signal: string) => {
       await prisma.$disconnect();
       logger.info('Database connection closed');
       
-      await redis.quit();
-      logger.info('Redis connection closed');
+      if (redis) {
+        await redis.quit();
+        logger.info('Redis connection closed');
+      }
       
       process.exit(0);
     } catch (error) {

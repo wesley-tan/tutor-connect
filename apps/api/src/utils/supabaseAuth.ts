@@ -5,14 +5,17 @@ import { AuthenticationError } from '../middleware/errorHandlers';
 import { logger } from './logger';
 
 // Initialize Supabase client for server-side operations
-const supabaseUrl = process.env.SUPABASE_URL!;
-const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
+const supabaseUrl = process.env.SUPABASE_URL;
+const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
 if (!supabaseUrl || !supabaseServiceKey) {
-  throw new Error('Missing Supabase environment variables');
+  console.warn('Missing Supabase environment variables. Backend auth will not work properly.');
+  // Don't throw error, just log warning
 }
 
-const supabase = createClient(supabaseUrl, supabaseServiceKey);
+const supabase = supabaseUrl && supabaseServiceKey 
+  ? createClient(supabaseUrl, supabaseServiceKey)
+  : null;
 
 export interface AuthenticatedRequest extends Request {
   user: {
@@ -26,7 +29,7 @@ export interface AuthenticatedRequest extends Request {
 // Verify Supabase access token
 export const verifySupabaseToken = async (token: string) => {
   try {
-    const { data: { user }, error } = await supabase.auth.getUser(token);
+    const { data: { user }, error } = await supabase!.auth.getUser(token);
     
     if (error || !user) {
       throw new AuthenticationError('Invalid access token');
