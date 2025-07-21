@@ -1,7 +1,7 @@
 import express, { Request, Response } from 'express';
 import { prisma } from '@tutorconnect/database';
 import { asyncHandler, successResponse, ValidationError, NotFoundError } from '../middleware/errorHandlers';
-import { authenticateSupabaseToken, AuthenticatedRequest } from '../utils/supabaseAuth';
+import { authenticateToken, AuthenticatedRequest } from '../utils/auth';
 import { z } from 'zod';
 import multer from 'multer';
 
@@ -53,7 +53,7 @@ const CreateTutorProfileSchema = z.object({
 });
 
 // GET /api/v1/users/profile - Get current user profile
-router.get('/profile', authenticateSupabaseToken, asyncHandler(async (req: Request, res: Response) => {
+router.get('/profile', authenticateToken, asyncHandler(async (req: Request, res: Response) => {
   const { user } = req as AuthenticatedRequest;
   
   const userProfile = await prisma.user.findUnique({
@@ -101,7 +101,7 @@ router.get('/profile', authenticateSupabaseToken, asyncHandler(async (req: Reque
 }));
 
 // PUT /api/v1/users/profile - Update current user profile
-router.put('/profile', authenticateSupabaseToken, asyncHandler(async (req: Request, res: Response) => {
+router.put('/profile', authenticateToken, asyncHandler(async (req: Request, res: Response) => {
   const { user } = req as AuthenticatedRequest;
   const validatedData = UpdateProfileSchema.parse(req.body);
   
@@ -126,7 +126,7 @@ router.put('/profile', authenticateSupabaseToken, asyncHandler(async (req: Reque
 }));
 
 // POST /api/v1/users/upload-avatar - Upload profile avatar
-router.post('/upload-avatar', authenticateSupabaseToken, upload.single('avatar'), asyncHandler(async (req: Request, res: Response) => {
+router.post('/upload-avatar', authenticateToken, upload.single('avatar'), asyncHandler(async (req: Request, res: Response) => {
   const { user } = req as AuthenticatedRequest;
   
   if (!req.file) {
@@ -152,7 +152,7 @@ router.post('/upload-avatar', authenticateSupabaseToken, upload.single('avatar')
 }));
 
 // DELETE /api/v1/users/account - Delete user account
-router.delete('/account', authenticateSupabaseToken, asyncHandler(async (req: Request, res: Response) => {
+router.delete('/account', authenticateToken, asyncHandler(async (req: Request, res: Response) => {
   const { user } = req as AuthenticatedRequest;
   const { confirmPassword } = z.object({
     confirmPassword: z.string()
@@ -188,7 +188,7 @@ router.delete('/account', authenticateSupabaseToken, asyncHandler(async (req: Re
 }));
 
 // POST /api/v1/users/tutee-profile - Create tutee profile
-router.post('/tutee-profile', authenticateSupabaseToken, asyncHandler(async (req: Request, res: Response) => {
+router.post('/tutee-profile', authenticateToken, asyncHandler(async (req: Request, res: Response) => {
   const { user } = req as AuthenticatedRequest;
   const validatedData = CreateTuteeProfileSchema.parse(req.body);
 
@@ -226,7 +226,7 @@ router.post('/tutee-profile', authenticateSupabaseToken, asyncHandler(async (req
 }));
 
 // POST /api/v1/users/tutor-profile - Create tutor profile
-router.post('/tutor-profile', authenticateSupabaseToken, asyncHandler(async (req: Request, res: Response) => {
+router.post('/tutor-profile', authenticateToken, asyncHandler(async (req: Request, res: Response) => {
   const { user } = req as AuthenticatedRequest;
   const validatedData = CreateTutorProfileSchema.parse(req.body);
 
@@ -264,7 +264,7 @@ router.post('/tutor-profile', authenticateSupabaseToken, asyncHandler(async (req
 }));
 
 // GET /api/v1/users/tutee/recommendations - Get tutor recommendations (for tutees)
-router.get('/tutee/recommendations', authenticateSupabaseToken, asyncHandler(async (req: Request, res: Response) => {
+router.get('/tutee/recommendations', authenticateToken, asyncHandler(async (req: Request, res: Response) => {
   const { user } = req as AuthenticatedRequest;
   
   // Get tutee profile with subject needs
@@ -319,7 +319,7 @@ router.get('/tutee/recommendations', authenticateSupabaseToken, asyncHandler(asy
 }));
 
 // POST /api/v1/users/tutee/search - Search tutors with filters (for tutees)
-router.post('/tutee/search', authenticateSupabaseToken, asyncHandler(async (req: Request, res: Response) => {
+router.post('/tutee/search', authenticateToken, asyncHandler(async (req: Request, res: Response) => {
   const { user } = req as AuthenticatedRequest;
   
   const {
@@ -424,7 +424,7 @@ router.post('/tutee/search', authenticateSupabaseToken, asyncHandler(async (req:
 }));
 
 // GET /api/v1/users/tutee/sessions - Get tutee's session history
-router.get('/tutee/sessions', authenticateSupabaseToken, asyncHandler(async (req: Request, res: Response) => {
+router.get('/tutee/sessions', authenticateToken, asyncHandler(async (req: Request, res: Response) => {
   const { user } = req as AuthenticatedRequest;
   const page = parseInt(req.query.page as string) || 1;
   const limit = Math.min(parseInt(req.query.limit as string) || 10, 50);
@@ -483,7 +483,7 @@ router.get('/tutee/sessions', authenticateSupabaseToken, asyncHandler(async (req
 }));
 
 // POST /api/v1/users/tutee/goals - Add/update learning goals
-router.post('/tutee/goals', authenticateSupabaseToken, asyncHandler(async (req: Request, res: Response) => {
+router.post('/tutee/goals', authenticateToken, asyncHandler(async (req: Request, res: Response) => {
   const { user } = req as AuthenticatedRequest;
   const { goals } = z.object({
     goals: z.array(z.object({
@@ -523,7 +523,7 @@ router.post('/tutee/goals', authenticateSupabaseToken, asyncHandler(async (req: 
 }));
 
 // POST /api/v1/users/tutee/subjects - Add/update subject needs
-router.post('/tutee/subjects', authenticateSupabaseToken, asyncHandler(async (req: Request, res: Response) => {
+router.post('/tutee/subjects', authenticateToken, asyncHandler(async (req: Request, res: Response) => {
   const { user } = req as AuthenticatedRequest;
   const { subjects } = z.object({
     subjects: z.array(z.object({

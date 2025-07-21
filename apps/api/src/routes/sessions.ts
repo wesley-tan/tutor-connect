@@ -1,78 +1,40 @@
-import express, { Request, Response } from 'express';
+import { Router } from 'express';
 import { prisma } from '@tutorconnect/database';
-import { asyncHandler, successResponse, paginatedResponse, ValidationError, NotFoundError, ConflictError } from '../middleware/errorHandlers';
-import { authenticateSupabaseToken, AuthenticatedRequest } from '../utils/supabaseAuth';
-import { z } from 'zod';
+import { logger } from '../utils/logger';
+import { verifySupabaseToken, AuthenticatedRequest } from '../utils/supabaseAuth';
 
-const router = express.Router();
+const router = Router();
 
-// Validation schemas
-const BookSessionSchema = z.object({
-  tutorId: z.string(),
-  subjectId: z.string(),
-  scheduledStart: z.string().datetime(),
-  scheduledEnd: z.string().datetime(),
-  sessionType: z.enum(['online', 'in_person']).default('online'),
-  sessionNotes: z.string().optional()
-});
+// Get all sessions for the authenticated user
+router.get('/', verifySupabaseToken, async (req: AuthenticatedRequest, res) => {
+  try {
+    const userId = req.user.id;
+    const { status, role } = req.query;
 
-const UpdateSessionSchema = z.object({
-  scheduledStart: z.string().datetime().optional(),
-  scheduledEnd: z.string().datetime().optional(),
-  sessionNotes: z.string().optional(),
-  homeworkAssigned: z.string().optional()
-});
-
-const SessionFilterSchema = z.object({
-  status: z.string().optional(),
-  tutorId: z.string().optional(),
-  startDate: z.string().optional(),
-  endDate: z.string().optional(),
-  page: z.coerce.number().min(1).default(1),
-  limit: z.coerce.number().min(1).max(50).default(10)
-});
-
-// GET /api/v1/sessions - Get user's sessions
-router.get('/', authenticateSupabaseToken, asyncHandler(async (req: Request, res: Response) => {
-  const { user } = req as AuthenticatedRequest;
-  const query = SessionFilterSchema.parse(req.query);
-  const { page, limit, status, tutorId, startDate, endDate } = query;
-  const offset = (page - 1) * limit;
-
-  // Build where conditions based on user type
-  const where: any = {
+    let whereClause: any = {
     OR: [
-      { tutee: { userId: user.id } },
-      { tutor: { userId: user.id } }
+        { tutee: { userId } },
+        { tutor: { userId } }
     ]
   };
 
+    // Filter by status if provided
   if (status) {
-    where.status = status;
+      whereClause.statusId = parseInt(status as string);
   }
 
-  if (tutorId) {
-    where.tutorId = tutorId;
-  }
-
-  if (startDate) {
-    where.scheduledStart = { gte: new Date(startDate) };
-  }
-
-  if (endDate) {
-    where.scheduledEnd = { lte: new Date(endDate) };
-  }
-
-  const [sessions, total] = await Promise.all([
-    prisma.session.findMany({
-      where,
+    const sessions = await prisma.session.findMany({
+      where: whereClause,
       include: {
+        subject: true,
         tutor: {
           include: {
             user: {
               select: {
+                id: true,
                 firstName: true,
                 lastName: true,
+                email: true,
                 profileImageUrl: true
               }
             }
@@ -82,132 +44,228 @@ router.get('/', authenticateSupabaseToken, asyncHandler(async (req: Request, res
           include: {
             user: {
               select: {
+                id: true,
                 firstName: true,
                 lastName: true,
+                email: true,
+                profileImageUrl: true
+              }
+            }
+          }
+        }
+      },
+      orderBy: {
+        scheduledStart: 'desc'
+      }
+    });
+
+    // Transform sessions to show the other participant
+    const transformedSessions = sessions.map(session => {
+      const isTutor = session.tutor.userId === userId;
+      const otherParticipant = isTutor ? session.tutee.user : session.tutor.user;
+      
+      return {
+        ...session,
+        otherParticipant,
+        role: isTutor ? 'tutor' : 'tutee'
+      };
+    });
+
+    res.json({
+      success: true,
+      data: transformedSessions
+    });
+  } catch (error) {
+    logger.error('Error fetching sessions:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to fetch sessions'
+    });
+  }
+});
+
+// Get a specific session
+router.get('/:sessionId', verifySupabaseToken, async (req: AuthenticatedRequest, res) => {
+  try {
+    const { sessionId } = req.params;
+    const userId = req.user.id;
+
+    const session = await prisma.session.findFirst({
+      where: {
+        id: sessionId,
+        OR: [
+          { tutee: { userId } },
+          { tutor: { userId } }
+        ]
+      },
+      include: {
+        subject: true,
+        tutor: {
+          include: {
+            user: {
+              select: {
+                id: true,
+                firstName: true,
+                lastName: true,
+                email: true,
                 profileImageUrl: true
               }
             }
           }
         },
-        subject: { select: { name: true } },
-        payment: {
+        tutee: {
+          include: {
+            user: {
           select: {
             id: true,
-            amount: true,
-            status: true
+                firstName: true,
+                lastName: true,
+                email: true,
+                profileImageUrl: true
+              }
+            }
           }
         }
-      },
-      skip: offset,
-      take: limit,
-      orderBy: { scheduledStart: 'desc' }
-    }),
-    prisma.session.count({ where })
-  ]);
+      }
+    });
 
-  paginatedResponse(res, sessions, total, page, limit, 'Sessions retrieved successfully');
-}));
+    if (!session) {
+      return res.status(404).json({
+        success: false,
+        message: 'Session not found'
+      });
+    }
 
-// POST /api/v1/sessions - Book a session
-router.post('/', authenticateSupabaseToken, asyncHandler(async (req: Request, res: Response) => {
-  const { user } = req as AuthenticatedRequest;
-  const validatedData = BookSessionSchema.parse(req.body);
+    res.json({
+      success: true,
+      data: session
+    });
+  } catch (error) {
+    logger.error('Error fetching session:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to fetch session'
+    });
+  }
+});
 
-  // Verify user has a tutee profile
+// Create a new session (booking)
+router.post('/', verifySupabaseToken, async (req: AuthenticatedRequest, res) => {
+  try {
+    const {
+      tutorId,
+      subjectId,
+      scheduledStart,
+      scheduledEnd,
+      sessionType,
+      location,
+      notes
+    } = req.body;
+    const tuteeId = req.user.id;
+
+    // Validate required fields
+    if (!tutorId || !subjectId || !scheduledStart || !scheduledEnd) {
+      return res.status(400).json({
+        success: false,
+        message: 'Missing required fields'
+      });
+    }
+
+    // Verify the user is a student/tutee
+    const user = await prisma.user.findUnique({
+      where: { id: tuteeId }
+    });
+
+    if (user?.userType !== 'student') {
+      return res.status(403).json({
+        success: false,
+        message: 'Only students can book sessions'
+      });
+    }
+
+    // Get the tutee profile
   const tuteeProfile = await prisma.tuteeProfile.findUnique({
-    where: { userId: user.id }
+      where: { userId: tuteeId }
   });
 
   if (!tuteeProfile) {
-    throw new ValidationError('Only students/parents can book sessions');
+      return res.status(404).json({
+        success: false,
+        message: 'Tutee profile not found'
+      });
   }
 
-  // Verify tutor exists and is active
-  const tutorProfile = await prisma.tutorProfile.findUnique({
-    where: { id: validatedData.tutorId },
-    include: { user: true }
+    // Verify the tutor exists and is approved
+    const tutor = await prisma.tutorProfile.findFirst({
+      where: {
+        userId: tutorId,
+        isVerified: true
+      }
   });
 
-  if (!tutorProfile || !tutorProfile.user.isActive) {
-    throw new NotFoundError('Tutor not found or inactive');
+    if (!tutor) {
+      return res.status(404).json({
+        success: false,
+        message: 'Tutor not found or not verified'
+      });
   }
 
   // Check for scheduling conflicts
-  const scheduledStart = new Date(validatedData.scheduledStart);
-  const scheduledEnd = new Date(validatedData.scheduledEnd);
-
-  if (scheduledStart >= scheduledEnd) {
-    throw new ValidationError('Session end time must be after start time');
-  }
-
-  if (scheduledStart <= new Date()) {
-    throw new ValidationError('Cannot schedule sessions in the past');
-  }
-
-  // Check for conflicts with existing sessions
-  const conflictingSessions = await prisma.session.findMany({
+    const conflictingSession = await prisma.session.findFirst({
     where: {
-      tutorId: validatedData.tutorId,
-      status: { in: ['scheduled', 'in_progress'] },
+        tutorId: tutor.id,
+        statusId: { in: [1, 2, 3] }, // Pending, Confirmed, In Progress
       OR: [
         {
-          AND: [
-            { scheduledStart: { lte: scheduledStart } },
-            { scheduledEnd: { gt: scheduledStart } }
-          ]
+            scheduledStart: { lte: new Date(scheduledStart) },
+            scheduledEnd: { gt: new Date(scheduledStart) }
         },
         {
-          AND: [
-            { scheduledStart: { lt: scheduledEnd } },
-            { scheduledEnd: { gte: scheduledEnd } }
-          ]
+            scheduledStart: { lt: new Date(scheduledEnd) },
+            scheduledEnd: { gte: new Date(scheduledEnd) }
         }
       ]
     }
   });
 
-  if (conflictingSessions.length > 0) {
-    throw new ConflictError('Tutor is not available at the requested time');
+    if (conflictingSession) {
+      return res.status(409).json({
+        success: false,
+        message: 'Tutor is not available at this time'
+      });
   }
 
-  // Check tutor availability
-  const dayOfWeek = scheduledStart.getDay();
-  const startTime = scheduledStart.toTimeString().slice(0, 5);
-  const endTime = scheduledEnd.toTimeString().slice(0, 5);
+    // Calculate session duration and price
+    const startTime = new Date(scheduledStart);
+    const endTime = new Date(scheduledEnd);
+    const durationHours = (endTime.getTime() - startTime.getTime()) / (1000 * 60 * 60);
+    const pricePaid = parseFloat(tutor.hourlyRate.toString()) * durationHours;
+    const platformFee = pricePaid * 0.10; // 10% platform fee
+    const tutorEarnings = pricePaid - platformFee;
 
-  const availability = await prisma.tutorAvailability.findFirst({
-    where: {
-      tutorId: validatedData.tutorId,
-      dayOfWeek,
-      startTime: { lte: startTime },
-      endTime: { gte: endTime },
-      isAvailable: true
-    }
-  });
-
-  if (!availability) {
-    throw new ConflictError('Tutor is not available at the requested time');
-  }
-
-  // Create session
+    // Create the session
   const session = await prisma.session.create({
     data: {
       tuteeId: tuteeProfile.id,
-      tutorId: validatedData.tutorId,
-      subjectId: validatedData.subjectId,
-      scheduledStart,
-      scheduledEnd,
-      sessionType: validatedData.sessionType,
-      sessionNotes: validatedData.sessionNotes,
-      pricePaid: tutorProfile.hourlyRate,
-      platformFee: tutorProfile.hourlyRate * 0.15, // 15% platform fee
-      tutorEarnings: tutorProfile.hourlyRate * 0.85
+        tutorId: tutor.id,
+        subjectId,
+        statusId: 1, // Pending
+        scheduledStart: startTime,
+        scheduledEnd: endTime,
+        sessionType: sessionType || 'online',
+        sessionNotes: notes,
+        pricePaid: BigInt(Math.round(pricePaid * 100)), // Convert to cents
+        platformFee: BigInt(Math.round(platformFee * 100)),
+        tutorEarnings: BigInt(Math.round(tutorEarnings * 100)),
+        currency: 'USD'
     },
     include: {
+        subject: true,
       tutor: {
         include: {
           user: {
             select: {
+                id: true,
               firstName: true,
               lastName: true,
               email: true
@@ -215,28 +273,93 @@ router.post('/', authenticateSupabaseToken, asyncHandler(async (req: Request, re
           }
         }
       },
-      subject: { select: { name: true } }
+        tutee: {
+          include: {
+            user: {
+              select: {
+                id: true,
+                firstName: true,
+                lastName: true,
+                email: true
+              }
+            }
+          }
+        }
     }
   });
 
-  successResponse(res, { session }, 'Session booked successfully', 201);
-}));
+    res.json({
+      success: true,
+      data: session
+    });
+  } catch (error) {
+    logger.error('Error creating session:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to create session'
+    });
+  }
+});
 
-// GET /api/v1/sessions/:id - Get session details
-router.get('/:id', authenticateSupabaseToken, asyncHandler(async (req: Request, res: Response) => {
-  const { user } = req as AuthenticatedRequest;
-  const sessionId = req.params.id;
+// Update session status
+router.put('/:sessionId/status', verifySupabaseToken, async (req: AuthenticatedRequest, res) => {
+  try {
+    const { sessionId } = req.params;
+    const { statusId } = req.body;
+    const userId = req.user.id;
 
-  const session = await prisma.session.findUnique({
+    const session = await prisma.session.findFirst({
+      where: {
+        id: sessionId,
+        OR: [
+          { tutee: { userId } },
+          { tutor: { userId } }
+        ]
+      }
+    });
+
+    if (!session) {
+      return res.status(404).json({
+        success: false,
+        message: 'Session not found'
+      });
+    }
+
+    // Validate status transition
+    const validTransitions = {
+      1: [2, 4], // Pending -> Confirmed, Cancelled
+      2: [3, 4], // Confirmed -> In Progress, Cancelled
+      3: [5, 6], // In Progress -> Completed, Cancelled
+      4: [], // Cancelled - no further transitions
+      5: [], // Completed - no further transitions
+      6: [] // Cancelled - no further transitions
+    };
+
+    const allowedStatuses = validTransitions[session.statusId as keyof typeof validTransitions] || [];
+    if (!allowedStatuses.includes(statusId)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid status transition'
+      });
+    }
+
+    // Update session status
+    const updatedSession = await prisma.session.update({
     where: { id: sessionId },
+      data: {
+        statusId,
+        ...(statusId === 3 && { actualStart: new Date() }), // Set actual start when session begins
+        ...(statusId === 5 && { actualEnd: new Date() }) // Set actual end when session completes
+      },
     include: {
+        subject: true,
       tutor: {
         include: {
           user: {
             select: {
+                id: true,
               firstName: true,
               lastName: true,
-              profileImageUrl: true,
               email: true
             }
           }
@@ -246,297 +369,107 @@ router.get('/:id', authenticateSupabaseToken, asyncHandler(async (req: Request, 
         include: {
           user: {
             select: {
+                id: true,
               firstName: true,
               lastName: true,
-              profileImageUrl: true,
               email: true
             }
           }
         }
-      },
-      subject: { select: { name: true } },
-      payment: {
-        select: {
-          id: true,
-          amount: true,
-          status: true,
-          stripePaymentIntentId: true
-        }
-      },
-      review: {
-        select: {
-          id: true,
-          rating: true,
-          reviewText: true,
-          createdAt: true
-        }
       }
     }
   });
 
-  if (!session) {
-    throw new NotFoundError('Session not found');
+    res.json({
+      success: true,
+      data: updatedSession
+    });
+  } catch (error) {
+    logger.error('Error updating session status:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to update session status'
+    });
   }
+});
 
-  // Verify user is part of this session
-  const isParticipant = session.tutee.userId === user.id || session.tutor.userId === user.id;
-  if (!isParticipant) {
-    throw new ValidationError('You are not authorized to view this session');
-  }
+// Cancel a session
+router.put('/:sessionId/cancel', verifySupabaseToken, async (req: AuthenticatedRequest, res) => {
+  try {
+    const { sessionId } = req.params;
+    const userId = req.user.id;
 
-  successResponse(res, { session }, 'Session details retrieved successfully');
-}));
-
-// PUT /api/v1/sessions/:id - Update session
-router.put('/:id', authenticateSupabaseToken, asyncHandler(async (req: Request, res: Response) => {
-  const { user } = req as AuthenticatedRequest;
-  const sessionId = req.params.id;
-  const validatedData = UpdateSessionSchema.parse(req.body);
-
-  const session = await prisma.session.findUnique({
-    where: { id: sessionId },
-    include: {
-      tutor: { include: { user: true } },
-      tutee: { include: { user: true } }
-    }
-  });
-
-  if (!session) {
-    throw new NotFoundError('Session not found');
-  }
-
-  // Verify user is part of this session
-  const isParticipant = session.tutee.userId === user.id || session.tutor.userId === user.id;
-  if (!isParticipant) {
-    throw new ValidationError('You are not authorized to update this session');
-  }
-
-  // Only allow updates for scheduled sessions
-  if (session.status !== 'scheduled') {
-    throw new ValidationError('Can only update scheduled sessions');
-  }
-
-  // If rescheduling, check for conflicts
-  if (validatedData.scheduledStart || validatedData.scheduledEnd) {
-    const newStart = validatedData.scheduledStart ? new Date(validatedData.scheduledStart) : session.scheduledStart;
-    const newEnd = validatedData.scheduledEnd ? new Date(validatedData.scheduledEnd) : session.scheduledEnd;
-
-    if (newStart >= newEnd) {
-      throw new ValidationError('Session end time must be after start time');
-    }
-
-    if (newStart <= new Date()) {
-      throw new ValidationError('Cannot schedule sessions in the past');
-    }
-
-    // Check for conflicts
-    const conflicts = await prisma.session.findMany({
+    const session = await prisma.session.findFirst({
       where: {
-        id: { not: sessionId },
-        tutorId: session.tutorId,
-        status: { in: ['scheduled', 'in_progress'] },
+        id: sessionId,
         OR: [
-          {
-            AND: [
-              { scheduledStart: { lte: newStart } },
-              { scheduledEnd: { gt: newStart } }
-            ]
-          },
-          {
-            AND: [
-              { scheduledStart: { lt: newEnd } },
-              { scheduledEnd: { gte: newEnd } }
-            ]
-          }
+          { tutee: { userId } },
+          { tutor: { userId } }
         ]
       }
     });
 
-    if (conflicts.length > 0) {
-      throw new ConflictError('Tutor is not available at the new requested time');
+    if (!session) {
+      return res.status(404).json({
+        success: false,
+        message: 'Session not found'
+      });
     }
+
+    // Only allow cancellation if session hasn't started
+    if (session.statusId >= 3) {
+      return res.status(400).json({
+        success: false,
+        message: 'Cannot cancel a session that has already started'
+      });
   }
 
   const updatedSession = await prisma.session.update({
     where: { id: sessionId },
     data: {
-      ...(validatedData.scheduledStart && { scheduledStart: new Date(validatedData.scheduledStart) }),
-      ...(validatedData.scheduledEnd && { scheduledEnd: new Date(validatedData.scheduledEnd) }),
-      ...(validatedData.sessionNotes && { sessionNotes: validatedData.sessionNotes }),
-      ...(validatedData.homeworkAssigned && { homeworkAssigned: validatedData.homeworkAssigned })
+        statusId: 4, // Cancelled
+        cancellationReason: 'Cancelled by user'
     },
     include: {
+        subject: true,
       tutor: {
         include: {
           user: {
             select: {
+                id: true,
               firstName: true,
-              lastName: true
+                lastName: true,
+                email: true
+    }
+            }
+          }
+        },
+        tutee: {
+    include: {
+            user: {
+              select: {
+                id: true,
+                firstName: true,
+                lastName: true,
+                email: true
+              }
             }
           }
         }
-      },
-      subject: { select: { name: true } }
     }
   });
 
-  successResponse(res, { session: updatedSession }, 'Session updated successfully');
-}));
-
-// DELETE /api/v1/sessions/:id - Cancel session
-router.delete('/:id', authenticateSupabaseToken, asyncHandler(async (req: Request, res: Response) => {
-  const { user } = req as AuthenticatedRequest;
-  const sessionId = req.params.id;
-  const { reason } = z.object({ reason: z.string().optional() }).parse(req.body);
-
-  const session = await prisma.session.findUnique({
-    where: { id: sessionId },
-    include: {
-      tutor: { include: { user: true } },
-      tutee: { include: { user: true } },
-      payment: true
-    }
-  });
-
-  if (!session) {
-    throw new NotFoundError('Session not found');
-  }
-
-  // Verify user is part of this session
-  const isParticipant = session.tutee.userId === user.id || session.tutor.userId === user.id;
-  if (!isParticipant) {
-    throw new ValidationError('You are not authorized to cancel this session');
-  }
-
-  // Only allow cancellation of scheduled sessions
-  if (session.status !== 'scheduled') {
-    throw new ValidationError('Can only cancel scheduled sessions');
-  }
-
-  // Check cancellation timing (must be at least 24 hours before)
-  const hoursUntilSession = (session.scheduledStart.getTime() - new Date().getTime()) / (1000 * 60 * 60);
-  if (hoursUntilSession < 24) {
-    throw new ValidationError('Sessions can only be cancelled at least 24 hours in advance');
-  }
-
-  // Cancel session
-  const cancelledSession = await prisma.session.update({
-    where: { id: sessionId },
-    data: {
-      status: 'cancelled',
-      cancellationReason: reason || 'Cancelled by user'
-    }
-  });
-
-  // If payment exists, initiate refund process
-  if (session.payment && session.payment.status === 'succeeded') {
-    // TODO: Implement refund logic with Stripe
-  }
-
-  successResponse(res, { session: cancelledSession }, 'Session cancelled successfully');
-}));
-
-// POST /api/v1/sessions/:id/join - Join video session
-router.post('/:id/join', authenticateSupabaseToken, asyncHandler(async (req: Request, res: Response) => {
-  const { user } = req as AuthenticatedRequest;
-  const sessionId = req.params.id;
-
-  const session = await prisma.session.findUnique({
-    where: { id: sessionId },
-    include: {
-      tutor: { include: { user: true } },
-      tutee: { include: { user: true } }
-    }
-  });
-
-  if (!session) {
-    throw new NotFoundError('Session not found');
-  }
-
-  // Verify user is part of this session
-  const isParticipant = session.tutee.userId === user.id || session.tutor.userId === user.id;
-  if (!isParticipant) {
-    throw new ValidationError('You are not authorized to join this session');
-  }
-
-  // Check if session is ready to join (within 15 minutes of start time)
-  const now = new Date();
-  const sessionStart = new Date(session.scheduledStart);
-  const minutesUntilStart = (sessionStart.getTime() - now.getTime()) / (1000 * 60);
-
-  if (minutesUntilStart > 15) {
-    throw new ValidationError('Session can only be joined 15 minutes before start time');
-  }
-
-  if (minutesUntilStart < -30) {
-    throw new ValidationError('Session has ended');
-  }
-
-  // Update session status to in_progress if not already
-  if (session.status === 'scheduled' && minutesUntilStart <= 0) {
-    await prisma.session.update({
-      where: { id: sessionId },
-      data: {
-        status: 'in_progress',
-        actualStart: now
-      }
+    res.json({
+      success: true,
+      data: updatedSession
+    });
+  } catch (error) {
+    logger.error('Error cancelling session:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to cancel session'
     });
   }
-
-  // Return session join information
-  // TODO: Generate Zoom meeting URL or return video call token
-  const joinInfo = {
-    sessionId,
-    meetingUrl: session.zoomJoinUrl || `https://tutorconnect.com/session/${sessionId}`,
-    meetingId: session.zoomMeetingId || sessionId,
-    password: session.zoomPassword
-  };
-
-  successResponse(res, { joinInfo }, 'Session join information retrieved successfully');
-}));
-
-// POST /api/v1/sessions/:id/complete - Mark session complete
-router.post('/:id/complete', authenticateSupabaseToken, asyncHandler(async (req: Request, res: Response) => {
-  const { user } = req as AuthenticatedRequest;
-  const sessionId = req.params.id;
-  const { sessionNotes, homeworkAssigned } = z.object({
-    sessionNotes: z.string().optional(),
-    homeworkAssigned: z.string().optional()
-  }).parse(req.body);
-
-  const session = await prisma.session.findUnique({
-    where: { id: sessionId },
-    include: {
-      tutor: { include: { user: true } },
-      tutee: { include: { user: true } }
-    }
-  });
-
-  if (!session) {
-    throw new NotFoundError('Session not found');
-  }
-
-  // Only tutors can mark sessions as complete
-  if (session.tutor.userId !== user.id) {
-    throw new ValidationError('Only the tutor can mark a session as complete');
-  }
-
-  // Can only complete in-progress sessions
-  if (session.status !== 'in_progress') {
-    throw new ValidationError('Can only complete sessions that are in progress');
-  }
-
-  const completedSession = await prisma.session.update({
-    where: { id: sessionId },
-    data: {
-      status: 'completed',
-      actualEnd: new Date(),
-      sessionNotes,
-      homeworkAssigned
-    }
-  });
-
-  successResponse(res, { session: completedSession }, 'Session marked as completed successfully');
-}));
+});
 
 export default router; 

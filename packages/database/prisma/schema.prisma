@@ -1,3 +1,6 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
 generator client {
   provider = "prisma-client-js"
 }
@@ -7,463 +10,9 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
-model User {
-  id               String         @id @default(cuid())
-  email            String         @unique
-  passwordHash     String?        @map("password_hash")
-  userType         UserType       @map("user_type")
-  firstName        String         @map("first_name")
-  lastName         String         @map("last_name")
-  phone            String?
-  profileImageUrl  String?        @map("profile_image_url")
-  timezone         String         @default("UTC")
-  isVerified       Boolean        @default(false) @map("is_verified")
-  isActive         Boolean        @default(true) @map("is_active")
-  authProvider     String?        @map("auth_provider")
-  googleId         String?        @unique @map("google_id")
-  supabaseId       String?        @unique @map("supabase_id")
-  createdAt        DateTime       @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt        DateTime       @updatedAt @map("updated_at") @db.Timestamptz(6)
-  deletedAt        DateTime?      @map("deleted_at") @db.Timestamptz(6)
-  auditLogs        AuditLog[]
-  conversationsA   Conversation[] @relation("ConversationParticipantA")
-  conversationsB   Conversation[] @relation("ConversationParticipantB")
-  magicLinks       MagicLink[]
-  receivedMessages Message[]      @relation("MessageReceiver")
-  sentMessages     Message[]      @relation("MessageSender")
-  payments         Payment[]      @relation("PaymentPayer")
-  paymentsReceived Payment[]      @relation("PaymentRecipient")
-  reviewsReceived  Review[]       @relation("ReviewReceiver")
-  reviewsGiven     Review[]       @relation("ReviewGiver")
-  children         TuteeProfile[] @relation("ParentChild")
-  tuteeProfile     TuteeProfile?
-  tutorProfile     TutorProfile?
-
-  @@index([email])
-  @@index([userType])
-  @@index([isActive])
-  @@index([deletedAt])
-  @@index([authProvider])
-  @@index([googleId])
-  @@index([supabaseId])
-  @@map("users")
-}
-
-model Subject {
-  id                String             @id @default(cuid())
-  name              String             @unique
-  category          String
-  description       String?
-  isActive          Boolean            @default(true) @map("is_active")
-  createdAt         DateTime           @default(now()) @map("created_at") @db.Timestamptz(6)
-  sessions          Session[]
-  tuteeSubjectNeeds TuteeSubjectNeed[]
-  tutorSubjects     TutorSubject[]
-
-  @@index([category])
-  @@index([isActive])
-  @@index([name])
-  @@map("subjects")
-}
-
-model Certification {
-  id                  String               @id @default(cuid())
-  name                String               @unique
-  issuingOrganization String?              @map("issuing_organization")
-  description         String?
-  isActive            Boolean              @default(true) @map("is_active")
-  createdAt           DateTime             @default(now()) @map("created_at") @db.Timestamptz(6)
-  tutorCertifications TutorCertification[]
-
-  @@index([isActive])
-  @@map("certifications")
-}
-
-model SessionStatus {
-  id          Int       @id @default(autoincrement())
-  name        String    @unique @db.VarChar(50)
-  description String?
-  isActive    Boolean   @default(true) @map("is_active")
-  createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
-  sessions    Session[]
-
-  @@map("session_statuses")
-}
-
-model PaymentStatus {
-  id          Int       @id @default(autoincrement())
-  name        String    @unique @db.VarChar(50)
-  description String?
-  isActive    Boolean   @default(true) @map("is_active")
-  createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
-  payments    Payment[]
-
-  @@map("payment_statuses")
-}
-
-model TuteeProfile {
-  id                     String              @id @default(cuid())
-  userId                 String              @unique @map("user_id")
-  gradeLevel             String?             @map("grade_level")
-  schoolName             String?             @map("school_name")
-  learningStyle          LearningStyle?      @map("learning_style")
-  budgetMin              Decimal?            @map("budget_min") @db.Decimal(10, 2)
-  budgetMax              Decimal?            @map("budget_max") @db.Decimal(10, 2)
-  preferredSessionLength Int                 @default(60) @map("preferred_session_length")
-  locationCity           String?             @map("location_city")
-  locationState          String?             @map("location_state")
-  parentId               String?             @map("parent_id")
-  createdAt              DateTime            @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt              DateTime            @updatedAt @map("updated_at") @db.Timestamptz(6)
-  sessions               Session[]
-  learningGoals          TuteeLearningGoal[]
-  parent                 User?               @relation("ParentChild", fields: [parentId], references: [id])
-  user                   User                @relation(fields: [userId], references: [id], onDelete: Cascade)
-  subjectNeeds           TuteeSubjectNeed[]
-
-  @@index([parentId])
-  @@index([gradeLevel])
-  @@index([budgetMin, budgetMax])
-  @@map("tutee_profiles")
-}
-
-model TuteeLearningGoal {
-  id        String       @id @default(cuid())
-  tuteeId   String       @map("tutee_id")
-  goalText  String       @map("goal_text")
-  priority  Int          @default(1)
-  createdAt DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
-  tutee     TuteeProfile @relation(fields: [tuteeId], references: [id], onDelete: Cascade)
-
-  @@index([tuteeId])
-  @@map("tutee_learning_goals")
-}
-
-model TuteeSubjectNeed {
-  id           String       @id @default(cuid())
-  tuteeId      String       @map("tutee_id")
-  subjectId    String       @map("subject_id")
-  urgencyLevel Int          @default(1) @map("urgency_level")
-  createdAt    DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
-  subject      Subject      @relation(fields: [subjectId], references: [id], onDelete: Cascade)
-  tutee        TuteeProfile @relation(fields: [tuteeId], references: [id], onDelete: Cascade)
-
-  @@unique([tuteeId, subjectId])
-  @@index([urgencyLevel])
-  @@map("tutee_subject_needs")
-}
-
-model TutorProfile {
-  id                      String                 @id @default(cuid())
-  userId                  String                 @unique @map("user_id")
-  hourlyRate              Decimal                @map("hourly_rate") @db.Decimal(10, 2)
-  educationLevel          String?                @map("education_level")
-  university              String?
-  major                   String?
-  graduationYear          Int?                   @map("graduation_year")
-  teachingExperienceYears Int                    @default(0) @map("teaching_experience_years")
-  bio                     String?
-  teachingMethodology     String?                @map("teaching_methodology")
-  availabilityTimezone    String?                @map("availability_timezone")
-  isBackgroundChecked     Boolean                @default(false) @map("is_background_checked")
-  backgroundCheckDate     DateTime?              @map("background_check_date") @db.Timestamptz(6)
-  ratingAverage           Decimal                @default(0.0) @map("rating_average") @db.Decimal(3, 2)
-  totalReviews            Int                    @default(0) @map("total_reviews")
-  totalSessions           Int                    @default(0) @map("total_sessions")
-  isVerified              Boolean                @default(false) @map("is_verified")
-  createdAt               DateTime               @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt               DateTime               @updatedAt @map("updated_at") @db.Timestamptz(6)
-  availabilityOverride    AvailabilityOverride[]
-  sessions                Session[]
-  availability            TutorAvailability[]
-  certifications          TutorCertification[]
-  languages               TutorLanguage[]
-  user                    User                   @relation(fields: [userId], references: [id], onDelete: Cascade)
-  specializations         TutorSpecialization[]
-  subjects                TutorSubject[]
-
-  @@index([ratingAverage])
-  @@index([hourlyRate])
-  @@index([isVerified])
-  @@index([isBackgroundChecked])
-  @@map("tutor_profiles")
-}
-
-model TutorSubject {
-  id               String       @id @default(cuid())
-  tutorId          String       @map("tutor_id")
-  subjectId        String       @map("subject_id")
-  proficiencyLevel Int          @default(1) @map("proficiency_level")
-  yearsExperience  Int          @default(0) @map("years_experience")
-  createdAt        DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
-  subject          Subject      @relation(fields: [subjectId], references: [id], onDelete: Cascade)
-  tutor            TutorProfile @relation(fields: [tutorId], references: [id], onDelete: Cascade)
-
-  @@unique([tutorId, subjectId])
-  @@index([proficiencyLevel])
-  @@map("tutor_subjects")
-}
-
-model TutorCertification {
-  id              String        @id @default(cuid())
-  tutorId         String        @map("tutor_id")
-  certificationId String        @map("certification_id")
-  earnedDate      DateTime?     @map("earned_date") @db.Date
-  expiryDate      DateTime?     @map("expiry_date") @db.Date
-  credentialUrl   String?       @map("credential_url")
-  isVerified      Boolean       @default(false) @map("is_verified")
-  createdAt       DateTime      @default(now()) @map("created_at") @db.Timestamptz(6)
-  certification   Certification @relation(fields: [certificationId], references: [id], onDelete: Cascade)
-  tutor           TutorProfile  @relation(fields: [tutorId], references: [id], onDelete: Cascade)
-
-  @@unique([tutorId, certificationId])
-  @@index([isVerified])
-  @@map("tutor_certifications")
-}
-
-model TutorSpecialization {
-  id                 String       @id @default(cuid())
-  tutorId            String       @map("tutor_id")
-  specializationName String       @map("specialization_name")
-  description        String?
-  createdAt          DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
-  tutor              TutorProfile @relation(fields: [tutorId], references: [id], onDelete: Cascade)
-
-  @@index([tutorId])
-  @@map("tutor_specializations")
-}
-
-model TutorLanguage {
-  id               String       @id @default(cuid())
-  tutorId          String       @map("tutor_id")
-  languageName     String       @map("language_name")
-  proficiencyLevel String       @default("conversational") @map("proficiency_level")
-  createdAt        DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
-  tutor            TutorProfile @relation(fields: [tutorId], references: [id], onDelete: Cascade)
-
-  @@unique([tutorId, languageName])
-  @@index([proficiencyLevel])
-  @@map("tutor_languages")
-}
-
-model TutorAvailability {
-  id          String       @id @default(cuid())
-  tutorId     String       @map("tutor_id")
-  dayOfWeek   Int          @map("day_of_week")
-  startTime   String       @map("start_time")
-  endTime     String       @map("end_time")
-  isAvailable Boolean      @default(true) @map("is_available")
-  createdAt   DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
-  tutor       TutorProfile @relation(fields: [tutorId], references: [id], onDelete: Cascade)
-
-  @@unique([tutorId, dayOfWeek, startTime, endTime])
-  @@index([tutorId, dayOfWeek])
-  @@index([isAvailable])
-  @@map("tutor_availability")
-}
-
-model AvailabilityOverride {
-  id          String       @id @default(cuid())
-  tutorId     String       @map("tutor_id")
-  date        DateTime     @db.Date
-  startTime   String?      @map("start_time")
-  endTime     String?      @map("end_time")
-  isAvailable Boolean      @map("is_available")
-  reason      String?      @db.VarChar(255)
-  createdAt   DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
-  tutor       TutorProfile @relation(fields: [tutorId], references: [id], onDelete: Cascade)
-
-  @@unique([tutorId, date])
-  @@index([date])
-  @@map("availability_overrides")
-}
-
-model Conversation {
-  id            String    @id @default(cuid())
-  participantA  String    @map("participant_a")
-  participantB  String    @map("participant_b")
-  lastMessageAt DateTime? @map("last_message_at") @db.Timestamptz(6)
-  createdAt     DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt     DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
-  userA         User      @relation("ConversationParticipantA", fields: [participantA], references: [id], onDelete: Cascade)
-  userB         User      @relation("ConversationParticipantB", fields: [participantB], references: [id], onDelete: Cascade)
-  messages      Message[]
-
-  @@unique([participantA, participantB])
-  @@index([participantA, participantB])
-  @@index([lastMessageAt])
-  @@map("conversations")
-}
-
-model Message {
-  id             String       @id @default(cuid())
-  conversationId String       @map("conversation_id")
-  senderId       String       @map("sender_id")
-  receiverId     String       @map("receiver_id")
-  messageText    String       @map("message_text")
-  messageType    MessageType  @default(text) @map("message_type")
-  fileUrl        String?      @map("file_url")
-  fileName       String?      @map("file_name")
-  fileSizeBytes  Int?         @map("file_size_bytes")
-  isRead         Boolean      @default(false) @map("is_read")
-  readAt         DateTime?    @map("read_at") @db.Timestamptz(6)
-  createdAt      DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
-  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
-  receiver       User         @relation("MessageReceiver", fields: [receiverId], references: [id])
-  sender         User         @relation("MessageSender", fields: [senderId], references: [id])
-
-  @@index([conversationId, createdAt(sort: Desc)])
-  @@index([receiverId, isRead])
-  @@map("messages")
-}
-
-model Session {
-  id                 String        @id @default(cuid())
-  tuteeId            String        @map("tutee_id")
-  tutorId            String        @map("tutor_id")
-  subjectId          String        @map("subject_id")
-  statusId           Int           @default(1) @map("status_id")
-  scheduledStart     DateTime      @map("scheduled_start") @db.Timestamptz(6)
-  scheduledEnd       DateTime      @map("scheduled_end") @db.Timestamptz(6)
-  actualStart        DateTime?     @map("actual_start") @db.Timestamptz(6)
-  actualEnd          DateTime?     @map("actual_end") @db.Timestamptz(6)
-  sessionType        SessionType   @default(online) @map("session_type")
-  zoomMeetingId      String?       @map("zoom_meeting_id")
-  zoomJoinUrl        String?       @map("zoom_join_url")
-  zoomPassword       String?       @map("zoom_password")
-  sessionNotes       String?       @map("session_notes")
-  homeworkAssigned   String?       @map("homework_assigned")
-  cancellationReason String?       @map("cancellation_reason")
-  pricePaid          BigInt?       @map("price_paid")
-  platformFee        BigInt?       @map("platform_fee")
-  tutorEarnings      BigInt?       @map("tutor_earnings")
-  currency           String        @default("USD") @db.VarChar(3)
-  createdAt          DateTime      @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt          DateTime      @updatedAt @map("updated_at") @db.Timestamptz(6)
-  deletedAt          DateTime?     @map("deleted_at") @db.Timestamptz(6)
-  payment            Payment?
-  review             Review?
-  status             SessionStatus @relation(fields: [statusId], references: [id])
-  subject            Subject       @relation(fields: [subjectId], references: [id])
-  tutee              TuteeProfile  @relation(fields: [tuteeId], references: [id])
-  tutor              TutorProfile  @relation(fields: [tutorId], references: [id])
-
-  @@unique([tutorId, scheduledStart], name: "unique_tutor_timeslot")
-  @@index([tuteeId])
-  @@index([tutorId])
-  @@index([statusId])
-  @@index([scheduledStart])
-  @@index([deletedAt])
-  @@map("sessions")
-}
-
-model Review {
-  id                    String   @id @default(cuid())
-  sessionId             String   @unique @map("session_id")
-  reviewerId            String   @map("reviewer_id")
-  revieweeId            String   @map("reviewee_id")
-  rating                Int
-  reviewText            String?  @map("review_text")
-  teachingEffectiveness Int?     @map("teaching_effectiveness")
-  communication         Int?
-  punctuality           Int?
-  wouldRecommend        Boolean? @map("would_recommend")
-  isAnonymous           Boolean  @default(false) @map("is_anonymous")
-  createdAt             DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
-  reviewee              User     @relation("ReviewReceiver", fields: [revieweeId], references: [id])
-  reviewer              User     @relation("ReviewGiver", fields: [reviewerId], references: [id])
-  session               Session  @relation(fields: [sessionId], references: [id])
-
-  @@index([revieweeId])
-  @@index([rating])
-  @@index([createdAt])
-  @@map("reviews")
-}
-
-model Payment {
-  id                    String        @id @default(cuid())
-  sessionId             String        @unique @map("session_id")
-  payerId               String        @map("payer_id")
-  recipientId           String        @map("recipient_id")
-  statusId              Int           @default(1) @map("status_id")
-  stripePaymentIntentId String?       @unique @map("stripe_payment_intent_id")
-  stripeCustomerId      String?       @map("stripe_customer_id")
-  amount                BigInt
-  platformFee           BigInt        @map("platform_fee")
-  netAmount             BigInt        @map("net_amount")
-  currency              String        @default("USD") @db.VarChar(3)
-  paymentMethod         String?       @map("payment_method")
-  failureReason         String?       @map("failure_reason")
-  refundAmount          BigInt        @default(0) @map("refund_amount")
-  createdAt             DateTime      @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt             DateTime      @updatedAt @map("updated_at") @db.Timestamptz(6)
-  deletedAt             DateTime?     @map("deleted_at") @db.Timestamptz(6)
-  payer                 User          @relation("PaymentPayer", fields: [payerId], references: [id])
-  recipient             User          @relation("PaymentRecipient", fields: [recipientId], references: [id])
-  session               Session       @relation(fields: [sessionId], references: [id])
-  status                PaymentStatus @relation(fields: [statusId], references: [id])
-
-  @@index([payerId])
-  @@index([recipientId])
-  @@index([statusId])
-  @@index([createdAt])
-  @@index([deletedAt])
-  @@map("payments")
-}
-
-model AuditLog {
-  id         String   @id @default(cuid())
-  userId     String?  @map("user_id")
-  action     String   @db.VarChar(100)
-  resource   String   @db.VarChar(100)
-  resourceId String?  @map("resource_id")
-  oldValues  Json?    @map("old_values")
-  newValues  Json?    @map("new_values")
-  metadata   Json?
-  ipAddress  String?  @map("ip_address") @db.Inet
-  userAgent  String?  @map("user_agent")
-  createdAt  DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
-  user       User?    @relation(fields: [userId], references: [id])
-
-  @@index([userId])
-  @@index([action])
-  @@index([resource])
-  @@index([createdAt])
-  @@map("audit_logs")
-}
-
-model EventLog {
-  id           String    @id @default(cuid())
-  type         String    @db.VarChar(100)
-  payload      Json
-  metadata     Json
-  status       String    @default("pending") @db.VarChar(20)
-  processedAt  DateTime? @map("processed_at") @db.Timestamptz(6)
-  errorMessage String?   @map("error_message")
-  retryCount   Int       @default(0) @map("retry_count")
-  createdAt    DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
-
-  @@index([type])
-  @@index([status])
-  @@index([createdAt])
-  @@map("event_logs")
-}
-
-model MagicLink {
-  id        String   @id @default(cuid())
-  email     String
-  token     String   @unique
-  expiresAt DateTime @map("expires_at") @db.Timestamptz(6)
-  used      Boolean  @default(false)
-  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
-  user      User     @relation(fields: [email], references: [email])
-
-  @@index([email])
-  @@index([token])
-  @@index([expiresAt])
-  @@index([used])
-  @@map("magic_links")
-}
+// =============================================================================
+// ENUMS
+// =============================================================================
 
 enum UserType {
   student
@@ -496,3 +45,593 @@ enum MessageType {
 
   @@map("message_type_enum")
 }
+
+enum RequestStatus {
+  open
+  in_progress
+  completed
+  cancelled
+
+  @@map("request_status_enum")
+}
+
+enum RequestUrgency {
+  low
+  normal
+  high
+  urgent
+
+  @@map("request_urgency_enum")
+}
+
+// =============================================================================
+// CORE USER MODELS
+// =============================================================================
+
+model User {
+  id              String    @id @default(cuid())
+  email           String    @unique
+  passwordHash    String    @map("password_hash")
+  userType        UserType  @map("user_type")
+  firstName       String    @map("first_name")
+  lastName        String    @map("last_name")
+  phone           String?
+  profileImageUrl String?   @map("profile_image_url")
+  timezone        String    @default("UTC")
+  isVerified      Boolean   @default(false) @map("is_verified")
+  isActive        Boolean   @default(true) @map("is_active")
+  createdAt       DateTime  @default(now()) @map("created_at") @db.Timestamptz()
+  updatedAt       DateTime  @updatedAt @map("updated_at") @db.Timestamptz()
+  deletedAt       DateTime? @map("deleted_at") @db.Timestamptz()
+
+  // Relations
+  tuteeProfile     TuteeProfile?
+  tutorProfile     TutorProfile?
+  sentMessages     Message[]          @relation("MessageSender")
+  receivedMessages Message[]          @relation("MessageReceiver")
+  conversationsA   Conversation[]     @relation("ConversationParticipantA")
+  conversationsB   Conversation[]     @relation("ConversationParticipantB")
+  reviewsGiven     Review[]           @relation("ReviewGiver")
+  reviewsReceived  Review[]           @relation("ReviewReceiver")
+  payments         Payment[]          @relation("PaymentPayer")
+  paymentsReceived Payment[]          @relation("PaymentRecipient")
+  auditLogs        AuditLog[]
+  children         TuteeProfile[]     @relation("ParentChild")
+
+  // Indexes
+  @@index([email])
+  @@index([userType])
+  @@index([isActive])
+  @@index([deletedAt])
+  @@map("users")
+}
+
+// =============================================================================
+// REFERENCE TABLES
+// =============================================================================
+
+model Subject {
+  id          String   @id @default(cuid())
+  name        String   @unique
+  category    String   // 'AP', 'IB', 'SAT', 'ACT', 'General'
+  description String?
+  isActive    Boolean  @default(true) @map("is_active")
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz()
+
+  // Relations
+  tutorSubjects     TutorSubject[]
+  tuteeSubjectNeeds TuteeSubjectNeed[]
+  sessions          Session[]
+  tutoringRequests  TutoringRequest[]
+
+  @@index([category])
+  @@index([isActive])
+  @@index([name])
+  @@map("subjects")
+}
+
+model Certification {
+  id                  String   @id @default(cuid())
+  name                String   @unique
+  issuingOrganization String?  @map("issuing_organization")
+  description         String?
+  isActive            Boolean  @default(true) @map("is_active")
+  createdAt           DateTime @default(now()) @map("created_at") @db.Timestamptz()
+
+  // Relations
+  tutorCertifications TutorCertification[]
+
+  @@index([isActive])
+  @@map("certifications")
+}
+
+model SessionStatus {
+  id          Int       @id @default(autoincrement())
+  name        String    @unique @db.VarChar(50)
+  description String?
+  isActive    Boolean   @default(true) @map("is_active")
+  createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz()
+
+  // Relations
+  sessions Session[]
+
+  @@map("session_statuses")
+}
+
+model PaymentStatus {
+  id          Int       @id @default(autoincrement())
+  name        String    @unique @db.VarChar(50)
+  description String?
+  isActive    Boolean   @default(true) @map("is_active")
+  createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz()
+
+  // Relations
+  payments Payment[]
+
+  @@map("payment_statuses")
+}
+
+// =============================================================================
+// TUTEE PROFILE AND RELATED TABLES
+// =============================================================================
+
+model TuteeProfile {
+  id                      String         @id @default(cuid())
+  userId                  String         @unique @map("user_id")
+  gradeLevel              String?        @map("grade_level")
+  schoolName              String?        @map("school_name")
+  learningStyle           LearningStyle? @map("learning_style")
+  budgetMin               Decimal?       @map("budget_min") @db.Decimal(10, 2)
+  budgetMax               Decimal?       @map("budget_max") @db.Decimal(10, 2)
+  preferredSessionLength  Int            @default(60) @map("preferred_session_length")
+  locationCity            String?        @map("location_city")
+  locationState           String?        @map("location_state")
+  parentId                String?        @map("parent_id")
+  createdAt               DateTime       @default(now()) @map("created_at") @db.Timestamptz()
+  updatedAt               DateTime       @updatedAt @map("updated_at") @db.Timestamptz()
+
+  // Relations
+  user             User                   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  parent           User?                  @relation("ParentChild", fields: [parentId], references: [id])
+  learningGoals    TuteeLearningGoal[]
+  subjectNeeds     TuteeSubjectNeed[]
+  sessions         Session[]
+  tutoringRequests TutoringRequest[]
+
+  @@index([parentId])
+  @@index([gradeLevel])
+  @@index([budgetMin, budgetMax])
+  @@map("tutee_profiles")
+}
+
+model TuteeLearningGoal {
+  id        String   @id @default(cuid())
+  tuteeId   String   @map("tutee_id")
+  goalText  String   @map("goal_text")
+  priority  Int      @default(1)
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz()
+
+  // Relations
+  tutee TuteeProfile @relation(fields: [tuteeId], references: [id], onDelete: Cascade)
+
+  @@index([tuteeId])
+  @@map("tutee_learning_goals")
+}
+
+model TuteeSubjectNeed {
+  id           String   @id @default(cuid())
+  tuteeId      String   @map("tutee_id")
+  subjectId    String   @map("subject_id")
+  urgencyLevel Int      @default(1) @map("urgency_level")
+  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz()
+
+  // Relations
+  tutee   TuteeProfile @relation(fields: [tuteeId], references: [id], onDelete: Cascade)
+  subject Subject      @relation(fields: [subjectId], references: [id], onDelete: Cascade)
+
+  @@unique([tuteeId, subjectId])
+  @@index([urgencyLevel])
+  @@map("tutee_subject_needs")
+}
+
+// =============================================================================
+// TUTOR PROFILE AND RELATED TABLES
+// =============================================================================
+
+model TutorProfile {
+  id                       String    @id @default(cuid())
+  userId                   String    @unique @map("user_id")
+  hourlyRate               Decimal   @map("hourly_rate") @db.Decimal(10, 2)
+  educationLevel           String?   @map("education_level")
+  university               String?
+  major                    String?
+  graduationYear           Int?      @map("graduation_year")
+  teachingExperienceYears  Int       @default(0) @map("teaching_experience_years")
+  bio                      String?
+  teachingMethodology      String?   @map("teaching_methodology")
+  availabilityTimezone     String?   @map("availability_timezone")
+  isBackgroundChecked      Boolean   @default(false) @map("is_background_checked")
+  backgroundCheckDate      DateTime? @map("background_check_date") @db.Timestamptz()
+  ratingAverage            Decimal   @default(0.0) @map("rating_average") @db.Decimal(3, 2)
+  totalReviews             Int       @default(0) @map("total_reviews")
+  totalSessions            Int       @default(0) @map("total_sessions")
+  isVerified               Boolean   @default(false) @map("is_verified")
+  createdAt                DateTime  @default(now()) @map("created_at") @db.Timestamptz()
+  updatedAt                DateTime  @updatedAt @map("updated_at") @db.Timestamptz()
+
+  // Relations
+  user                 User                     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  subjects             TutorSubject[]
+  certifications       TutorCertification[]
+  specializations      TutorSpecialization[]
+  languages            TutorLanguage[]
+  availability         TutorAvailability[]
+  availabilityOverride AvailabilityOverride[]
+  sessions             Session[]
+  requestResponses     RequestResponse[]
+
+  @@index([ratingAverage])
+  @@index([hourlyRate])
+  @@index([isVerified])
+  @@index([isBackgroundChecked])
+  @@map("tutor_profiles")
+}
+
+model TutorSubject {
+  id               String   @id @default(cuid())
+  tutorId          String   @map("tutor_id")
+  subjectId        String   @map("subject_id")
+  proficiencyLevel Int      @default(1) @map("proficiency_level")
+  yearsExperience  Int      @default(0) @map("years_experience")
+  createdAt        DateTime @default(now()) @map("created_at") @db.Timestamptz()
+
+  // Relations
+  tutor   TutorProfile @relation(fields: [tutorId], references: [id], onDelete: Cascade)
+  subject Subject      @relation(fields: [subjectId], references: [id], onDelete: Cascade)
+
+  @@unique([tutorId, subjectId])
+  @@index([proficiencyLevel])
+  @@map("tutor_subjects")
+}
+
+model TutorCertification {
+  id              String    @id @default(cuid())
+  tutorId         String    @map("tutor_id")
+  certificationId String    @map("certification_id")
+  earnedDate      DateTime? @map("earned_date") @db.Date
+  expiryDate      DateTime? @map("expiry_date") @db.Date
+  credentialUrl   String?   @map("credential_url")
+  isVerified      Boolean   @default(false) @map("is_verified")
+  createdAt       DateTime  @default(now()) @map("created_at") @db.Timestamptz()
+
+  // Relations
+  tutor         TutorProfile  @relation(fields: [tutorId], references: [id], onDelete: Cascade)
+  certification Certification @relation(fields: [certificationId], references: [id], onDelete: Cascade)
+
+  @@unique([tutorId, certificationId])
+  @@index([isVerified])
+  @@map("tutor_certifications")
+}
+
+model TutorSpecialization {
+  id                   String   @id @default(cuid())
+  tutorId              String   @map("tutor_id")
+  specializationName   String   @map("specialization_name")
+  description          String?
+  createdAt            DateTime @default(now()) @map("created_at") @db.Timestamptz()
+
+  // Relations
+  tutor TutorProfile @relation(fields: [tutorId], references: [id], onDelete: Cascade)
+
+  @@index([tutorId])
+  @@map("tutor_specializations")
+}
+
+model TutorLanguage {
+  id               String   @id @default(cuid())
+  tutorId          String   @map("tutor_id")
+  languageName     String   @map("language_name")
+  proficiencyLevel String   @default("conversational") @map("proficiency_level") // native, fluent, conversational, basic
+  createdAt        DateTime @default(now()) @map("created_at") @db.Timestamptz()
+
+  // Relations
+  tutor TutorProfile @relation(fields: [tutorId], references: [id], onDelete: Cascade)
+
+  @@unique([tutorId, languageName])
+  @@index([proficiencyLevel])
+  @@map("tutor_languages")
+}
+
+// =============================================================================
+// AVAILABILITY SYSTEM
+// =============================================================================
+
+model TutorAvailability {
+  id          String   @id @default(cuid())
+  tutorId     String   @map("tutor_id")
+  dayOfWeek   Int      @map("day_of_week") // 0 = Sunday, 6 = Saturday
+  startTime   String   @map("start_time") // Stored as "HH:MM" format
+  endTime     String   @map("end_time") // Stored as "HH:MM" format
+  isAvailable Boolean  @default(true) @map("is_available")
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz()
+
+  // Relations
+  tutor TutorProfile @relation(fields: [tutorId], references: [id], onDelete: Cascade)
+
+  @@unique([tutorId, dayOfWeek, startTime, endTime])
+  @@index([tutorId, dayOfWeek])
+  @@index([isAvailable])
+  @@map("tutor_availability")
+}
+
+model AvailabilityOverride {
+  id          String    @id @default(cuid())
+  tutorId     String    @map("tutor_id")
+  date        DateTime  @db.Date
+  startTime   String?   @map("start_time") // If null, uses base availability
+  endTime     String?   @map("end_time") // If null, uses base availability
+  isAvailable Boolean   @map("is_available")
+  reason      String?   @db.VarChar(255) // "Holiday", "Sick", "Conference", etc.
+  createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz()
+
+  // Relations
+  tutor TutorProfile @relation(fields: [tutorId], references: [id], onDelete: Cascade)
+
+  @@unique([tutorId, date])
+  @@index([date])
+  @@map("availability_overrides")
+}
+
+// =============================================================================
+// TUTORING REQUESTS SYSTEM
+// =============================================================================
+
+model TutoringRequest {
+  id                String         @id @default(cuid())
+  tuteeId           String         @map("tutee_id")
+  subjectId         String         @map("subject_id")
+  title             String
+  description       String
+  preferredSchedule String?        @map("preferred_schedule")
+  budget            Decimal?       @db.Decimal(10, 2)
+  urgency           RequestUrgency @default(normal)
+  status            RequestStatus  @default(open)
+  createdAt         DateTime       @default(now()) @map("created_at") @db.Timestamptz()
+  updatedAt         DateTime       @updatedAt @map("updated_at") @db.Timestamptz()
+
+  // Relations
+  tutee     TuteeProfile      @relation(fields: [tuteeId], references: [id], onDelete: Cascade)
+  subject   Subject           @relation(fields: [subjectId], references: [id])
+  responses RequestResponse[]
+
+  @@index([tuteeId])
+  @@index([subjectId])
+  @@index([status])
+  @@index([urgency])
+  @@index([createdAt])
+  @@map("tutoring_requests")
+}
+
+model RequestResponse {
+  id               String    @id @default(cuid())
+  requestId        String    @map("request_id")
+  tutorId          String    @map("tutor_id")
+  message          String
+  proposedRate     Decimal?  @map("proposed_rate") @db.Decimal(10, 2)
+  proposedSchedule String?   @map("proposed_schedule")
+  isAccepted       Boolean   @default(false) @map("is_accepted")
+  createdAt        DateTime  @default(now()) @map("created_at") @db.Timestamptz()
+
+  // Relations
+  request TutoringRequest @relation(fields: [requestId], references: [id], onDelete: Cascade)
+  tutor   TutorProfile   @relation(fields: [tutorId], references: [id], onDelete: Cascade)
+
+  @@unique([requestId, tutorId])
+  @@index([requestId])
+  @@index([tutorId])
+  @@index([isAccepted])
+  @@map("request_responses")
+}
+
+// =============================================================================
+// MESSAGING SYSTEM
+// =============================================================================
+
+model Conversation {
+  id            String    @id @default(cuid())
+  participantA  String    @map("participant_a")
+  participantB  String    @map("participant_b")
+  lastMessageAt DateTime? @map("last_message_at") @db.Timestamptz()
+  createdAt     DateTime  @default(now()) @map("created_at") @db.Timestamptz()
+  updatedAt     DateTime  @updatedAt @map("updated_at") @db.Timestamptz()
+
+  // Relations
+  userA    User      @relation("ConversationParticipantA", fields: [participantA], references: [id], onDelete: Cascade)
+  userB    User      @relation("ConversationParticipantB", fields: [participantB], references: [id], onDelete: Cascade)
+  messages Message[]
+
+  @@unique([participantA, participantB])
+  @@index([participantA, participantB])
+  @@index([lastMessageAt])
+  @@map("conversations")
+}
+
+model Message {
+  id             String      @id @default(cuid())
+  conversationId String      @map("conversation_id")
+  senderId       String      @map("sender_id")
+  receiverId     String      @map("receiver_id")
+  messageText    String      @map("message_text")
+  messageType    MessageType @default(text) @map("message_type")
+  fileUrl        String?     @map("file_url")
+  fileName       String?     @map("file_name")
+  fileSizeBytes  Int?        @map("file_size_bytes")
+  isRead         Boolean     @default(false) @map("is_read")
+  readAt         DateTime?   @map("read_at") @db.Timestamptz()
+  createdAt      DateTime    @default(now()) @map("created_at") @db.Timestamptz()
+
+  // Relations
+  conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  sender       User         @relation("MessageSender", fields: [senderId], references: [id])
+  receiver     User         @relation("MessageReceiver", fields: [receiverId], references: [id])
+
+  @@index([conversationId, createdAt(sort: Desc)])
+  @@index([receiverId, isRead])
+  @@map("messages")
+}
+
+// =============================================================================
+// SESSIONS AND BOOKINGS
+// =============================================================================
+
+model Session {
+  id             String        @id @default(cuid())
+  tuteeId        String        @map("tutee_id")
+  tutorId        String        @map("tutor_id")
+  subjectId      String        @map("subject_id")
+  statusId       Int           @map("status_id") @default(1) // References SessionStatus
+  scheduledStart DateTime      @map("scheduled_start") @db.Timestamptz()
+  scheduledEnd   DateTime      @map("scheduled_end") @db.Timestamptz()
+  actualStart    DateTime?     @map("actual_start") @db.Timestamptz()
+  actualEnd      DateTime?     @map("actual_end") @db.Timestamptz()
+  sessionType    SessionType   @default(online) @map("session_type")
+  zoomMeetingId  String?       @map("zoom_meeting_id")
+  zoomJoinUrl    String?       @map("zoom_join_url")
+  zoomPassword   String?       @map("zoom_password")
+  sessionNotes   String?       @map("session_notes")
+  homeworkAssigned String?     @map("homework_assigned")
+  cancellationReason String?   @map("cancellation_reason")
+  pricePaid      BigInt?       @map("price_paid") // Stored in cents
+  platformFee    BigInt?       @map("platform_fee") // Stored in cents
+  tutorEarnings  BigInt?       @map("tutor_earnings") // Stored in cents
+  currency       String        @default("USD") @db.VarChar(3)
+  createdAt      DateTime      @default(now()) @map("created_at") @db.Timestamptz()
+  updatedAt      DateTime      @updatedAt @map("updated_at") @db.Timestamptz()
+  deletedAt      DateTime?     @map("deleted_at") @db.Timestamptz()
+
+  // Relations
+  tutee   TuteeProfile   @relation(fields: [tuteeId], references: [id])
+  tutor   TutorProfile   @relation(fields: [tutorId], references: [id])
+  subject Subject        @relation(fields: [subjectId], references: [id])
+  status  SessionStatus  @relation(fields: [statusId], references: [id])
+  payment Payment?
+  review  Review?
+
+  @@unique([tutorId, scheduledStart], name: "unique_tutor_timeslot")
+  @@index([tuteeId])
+  @@index([tutorId])
+  @@index([statusId])
+  @@index([scheduledStart])
+  @@index([deletedAt])
+  @@map("sessions")
+}
+
+// =============================================================================
+// REVIEWS AND RATINGS
+// =============================================================================
+
+model Review {
+  id                    String   @id @default(cuid())
+  sessionId             String   @unique @map("session_id")
+  reviewerId            String   @map("reviewer_id")
+  revieweeId            String   @map("reviewee_id")
+  rating                Int // 1-5 stars
+  reviewText            String?  @map("review_text")
+  teachingEffectiveness Int?     @map("teaching_effectiveness") // 1-5
+  communication         Int?     // 1-5
+  punctuality           Int?     // 1-5
+  wouldRecommend        Boolean? @map("would_recommend")
+  isAnonymous           Boolean  @default(false) @map("is_anonymous")
+  createdAt             DateTime @default(now()) @map("created_at") @db.Timestamptz()
+
+  // Relations
+  session  Session @relation(fields: [sessionId], references: [id])
+  reviewer User    @relation("ReviewGiver", fields: [reviewerId], references: [id])
+  reviewee User    @relation("ReviewReceiver", fields: [revieweeId], references: [id])
+
+  @@index([revieweeId])
+  @@index([rating])
+  @@index([createdAt])
+  @@map("reviews")
+}
+
+// =============================================================================
+// PAYMENTS
+// =============================================================================
+
+model Payment {
+  id                    String        @id @default(cuid())
+  sessionId             String        @unique @map("session_id")
+  payerId               String        @map("payer_id")
+  recipientId           String        @map("recipient_id")
+  statusId              Int           @map("status_id") @default(1) // References PaymentStatus
+  stripePaymentIntentId String?       @unique @map("stripe_payment_intent_id")
+  stripeCustomerId      String?       @map("stripe_customer_id")
+  amount                BigInt        @db.BigInt // Stored in minor units (cents)
+  platformFee           BigInt        @map("platform_fee") @db.BigInt
+  netAmount             BigInt        @map("net_amount") @db.BigInt
+  currency              String        @default("USD") @db.VarChar(3)
+  paymentMethod         String?       @map("payment_method")
+  failureReason         String?       @map("failure_reason")
+  refundAmount          BigInt        @default(0) @map("refund_amount") @db.BigInt
+  createdAt             DateTime      @default(now()) @map("created_at") @db.Timestamptz()
+  updatedAt             DateTime      @updatedAt @map("updated_at") @db.Timestamptz()
+  deletedAt             DateTime?     @map("deleted_at") @db.Timestamptz()
+
+  // Relations
+  session   Session       @relation(fields: [sessionId], references: [id])
+  payer     User          @relation("PaymentPayer", fields: [payerId], references: [id])
+  recipient User          @relation("PaymentRecipient", fields: [recipientId], references: [id])
+  status    PaymentStatus @relation(fields: [statusId], references: [id])
+
+  @@index([payerId])
+  @@index([recipientId])
+  @@index([statusId])
+  @@index([createdAt])
+  @@index([deletedAt])
+  @@map("payments")
+}
+
+// =============================================================================
+// AUDIT AND EVENT LOGGING
+// =============================================================================
+
+model AuditLog {
+  id         String    @id @default(cuid())
+  userId     String?   @map("user_id")
+  action     String    @db.VarChar(100)
+  resource   String    @db.VarChar(100)
+  resourceId String?   @map("resource_id")
+  oldValues  Json?     @map("old_values")
+  newValues  Json?     @map("new_values")
+  metadata   Json?
+  ipAddress  String?   @map("ip_address") @db.Inet
+  userAgent  String?   @map("user_agent")
+  createdAt  DateTime  @default(now()) @map("created_at") @db.Timestamptz()
+
+  // Relations
+  user User? @relation(fields: [userId], references: [id])
+
+  @@index([userId])
+  @@index([action])
+  @@index([resource])
+  @@index([createdAt])
+  @@map("audit_logs")
+}
+
+model EventLog {
+  id          String    @id @default(cuid())
+  type        String    @db.VarChar(100)
+  payload     Json
+  metadata    Json
+  status      String    @default("pending") @db.VarChar(20)
+  processedAt DateTime? @map("processed_at") @db.Timestamptz()
+  errorMessage String?  @map("error_message")
+  retryCount  Int       @default(0) @map("retry_count")
+  createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz()
+
+  @@index([type])
+  @@index([status])
+  @@index([createdAt])
+  @@map("event_logs")
+} 

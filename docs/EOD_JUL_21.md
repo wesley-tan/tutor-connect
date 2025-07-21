@@ -86,7 +86,6 @@
 - [ ] Implement rate limiting and monitoring
 - [ ] Add API documentation (Swagger)
 
-
 ### Low Priority
 - [ ] PWA support, advanced analytics, referral/monetization features
 

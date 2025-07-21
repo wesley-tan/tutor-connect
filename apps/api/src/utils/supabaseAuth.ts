@@ -6,7 +6,7 @@ import { logger } from './logger';
 
 // Initialize Supabase client for server-side operations
 const supabaseUrl = process.env.SUPABASE_URL;
-const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+const supabaseServiceKey = process.env.SUPABASE_SERVICE_KEY;
 
 if (!supabaseUrl || !supabaseServiceKey) {
   console.warn('Missing Supabase environment variables. Backend auth will not work properly.');

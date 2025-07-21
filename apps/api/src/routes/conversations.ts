@@ -1,7 +1,7 @@
 import express, { Request, Response } from 'express';
 import { prisma } from '@tutorconnect/database';
 import { asyncHandler, successResponse, paginatedResponse, ValidationError, NotFoundError } from '../middleware/errorHandlers';
-import { authenticateSupabaseToken, AuthenticatedRequest } from '../utils/supabaseAuth';
+import { authenticateToken, AuthenticatedRequest } from '../utils/auth';
 import { z } from 'zod';
 
 const router = express.Router();
@@ -20,7 +20,7 @@ const CreateConversationSchema = z.object({
 });
 
 // GET /api/v1/conversations - Get user's conversations
-router.get('/', authenticateSupabaseToken, asyncHandler(async (req: Request, res: Response) => {
+router.get('/', authenticateToken, asyncHandler(async (req: Request, res: Response) => {
   const { user } = req as AuthenticatedRequest;
   const page = parseInt(req.query.page as string) || 1;
   const limit = Math.min(parseInt(req.query.limit as string) || 20, 50);
@@ -93,7 +93,7 @@ router.get('/', authenticateSupabaseToken, asyncHandler(async (req: Request, res
 }));
 
 // POST /api/v1/conversations - Create new conversation
-router.post('/', authenticateSupabaseToken, asyncHandler(async (req: Request, res: Response) => {
+router.post('/', authenticateToken, asyncHandler(async (req: Request, res: Response) => {
   const { user } = req as AuthenticatedRequest;
   const { participantId, sessionId, initialMessage } = CreateConversationSchema.parse(req.body);
 
@@ -196,7 +196,7 @@ router.post('/', authenticateSupabaseToken, asyncHandler(async (req: Request, re
 }));
 
 // GET /api/v1/conversations/:id/messages - Get messages in conversation
-router.get('/:id/messages', authenticateSupabaseToken, asyncHandler(async (req: Request, res: Response) => {
+router.get('/:id/messages', authenticateToken, asyncHandler(async (req: Request, res: Response) => {
   const { user } = req as AuthenticatedRequest;
   const conversationId = req.params.id;
   const page = parseInt(req.query.page as string) || 1;
@@ -261,7 +261,7 @@ router.get('/:id/messages', authenticateSupabaseToken, asyncHandler(async (req: 
 }));
 
 // POST /api/v1/conversations/:id/messages - Send message
-router.post('/:id/messages', authenticateSupabaseToken, asyncHandler(async (req: Request, res: Response) => {
+router.post('/:id/messages', authenticateToken, asyncHandler(async (req: Request, res: Response) => {
   const { user } = req as AuthenticatedRequest;
   const conversationId = req.params.id;
   const { content, messageType, fileUrl } = SendMessageSchema.parse(req.body);
@@ -314,7 +314,7 @@ router.post('/:id/messages', authenticateSupabaseToken, asyncHandler(async (req:
 }));
 
 // PUT /api/v1/messages/:id/read - Mark message as read
-router.put('/:messageId/read', authenticateSupabaseToken, asyncHandler(async (req: Request, res: Response) => {
+router.put('/:messageId/read', authenticateToken, asyncHandler(async (req: Request, res: Response) => {
   const { user } = req as AuthenticatedRequest;
   const messageId = req.params.messageId;
 
@@ -361,7 +361,7 @@ router.put('/:messageId/read', authenticateSupabaseToken, asyncHandler(async (re
 }));
 
 // GET /api/v1/conversations/:id - Get conversation details
-router.get('/:id', authenticateSupabaseToken, asyncHandler(async (req: Request, res: Response) => {
+router.get('/:id', authenticateToken, asyncHandler(async (req: Request, res: Response) => {
   const { user } = req as AuthenticatedRequest;
   const conversationId = req.params.id;
 
