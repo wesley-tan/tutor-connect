@@ -6,14 +6,13 @@ const REDIS_URL = process.env.REDIS_URL || 'redis://localhost:6379';
 // Create Redis client with graceful fallback
 export const redis = new Redis(REDIS_URL, {
   retryDelayOnFailover: 100,
-  maxRetriesPerRequest: 3,
+  maxRetriesPerRequest: 1,
   enableReadyCheck: true,
   lazyConnect: true,
   // Connection timeout
   connectTimeout: 5000,
   commandTimeout: 3000,
   // Graceful handling of connection failures
-  maxRetriesPerRequest: 1,
   retryDelayOnClusterDown: 300,
   enableOfflineQueue: false,
 });

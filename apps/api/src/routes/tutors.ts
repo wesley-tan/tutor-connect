@@ -1,7 +1,7 @@
 import express, { Request, Response } from 'express';
 import { prisma } from '@tutorconnect/database';
 import { asyncHandler, successResponse, paginatedResponse, ValidationError, NotFoundError } from '../middleware/errorHandlers';
-import { authenticateToken, requireRole, AuthenticatedRequest } from '../utils/auth';
+import { authenticateSupabaseToken, requireRole, AuthenticatedRequest } from '../utils/supabaseAuth';
 import { z } from 'zod';
 
 const router = express.Router();
@@ -151,7 +151,7 @@ router.get('/:id', asyncHandler(async (req: Request, res: Response) => {
 }));
 
 // PUT /api/v1/tutors/:id - Update tutor profile (only by tutor themselves)
-router.put('/:id', authenticateToken, requireRole('tutor'), asyncHandler(async (req: Request, res: Response) => {
+router.put('/:id', authenticateSupabaseToken, requireRole('tutor'), asyncHandler(async (req: Request, res: Response) => {
   const { user } = req as AuthenticatedRequest;
   const tutorId = req.params.id;
   const validatedData = TutorProfileUpdateSchema.parse(req.body);
@@ -198,7 +198,7 @@ router.get('/:id/availability', asyncHandler(async (req: Request, res: Response)
 }));
 
 // PUT /api/v1/tutors/:id/availability - Update tutor availability (only by tutor themselves)
-router.put('/:id/availability', authenticateToken, requireRole('tutor'), asyncHandler(async (req: Request, res: Response) => {
+router.put('/:id/availability', authenticateSupabaseToken, requireRole('tutor'), asyncHandler(async (req: Request, res: Response) => {
   const { user } = req as AuthenticatedRequest;
   const tutorId = req.params.id;
   const { availability } = AvailabilitySchema.parse(req.body);
@@ -276,7 +276,7 @@ router.get('/:id/reviews', asyncHandler(async (req: Request, res: Response) => {
 }));
 
 // GET /api/v1/tutors/:id/analytics - Tutor analytics (only by tutor themselves)
-router.get('/:id/analytics', authenticateToken, requireRole('tutor'), asyncHandler(async (req: Request, res: Response) => {
+router.get('/:id/analytics', authenticateSupabaseToken, requireRole('tutor'), asyncHandler(async (req: Request, res: Response) => {
   const { user } = req as AuthenticatedRequest;
   const tutorId = req.params.id;
 
@@ -346,7 +346,7 @@ router.get('/:id/analytics', authenticateToken, requireRole('tutor'), asyncHandl
 }));
 
 // POST /api/v1/tutors/:id/subjects - Add/update tutor subjects
-router.post('/:id/subjects', authenticateToken, requireRole('tutor'), asyncHandler(async (req: Request, res: Response) => {
+router.post('/:id/subjects', authenticateSupabaseToken, requireRole('tutor'), asyncHandler(async (req: Request, res: Response) => {
   const { user } = req as AuthenticatedRequest;
   const tutorId = req.params.id;
   const { subjects } = z.object({

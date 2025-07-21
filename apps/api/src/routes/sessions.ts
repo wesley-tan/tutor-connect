@@ -1,7 +1,7 @@
 import express, { Request, Response } from 'express';
 import { prisma } from '@tutorconnect/database';
 import { asyncHandler, successResponse, paginatedResponse, ValidationError, NotFoundError, ConflictError } from '../middleware/errorHandlers';
-import { authenticateToken, AuthenticatedRequest } from '../utils/auth';
+import { authenticateSupabaseToken, AuthenticatedRequest } from '../utils/supabaseAuth';
 import { z } from 'zod';
 
 const router = express.Router();
@@ -33,7 +33,7 @@ const SessionFilterSchema = z.object({
 });
 
 // GET /api/v1/sessions - Get user's sessions
-router.get('/', authenticateToken, asyncHandler(async (req: Request, res: Response) => {
+router.get('/', authenticateSupabaseToken, asyncHandler(async (req: Request, res: Response) => {
   const { user } = req as AuthenticatedRequest;
   const query = SessionFilterSchema.parse(req.query);
   const { page, limit, status, tutorId, startDate, endDate } = query;
@@ -109,7 +109,7 @@ router.get('/', authenticateToken, asyncHandler(async (req: Request, res: Respon
 }));
 
 // POST /api/v1/sessions - Book a session
-router.post('/', authenticateToken, asyncHandler(async (req: Request, res: Response) => {
+router.post('/', authenticateSupabaseToken, asyncHandler(async (req: Request, res: Response) => {
   const { user } = req as AuthenticatedRequest;
   const validatedData = BookSessionSchema.parse(req.body);
 
@@ -223,7 +223,7 @@ router.post('/', authenticateToken, asyncHandler(async (req: Request, res: Respo
 }));
 
 // GET /api/v1/sessions/:id - Get session details
-router.get('/:id', authenticateToken, asyncHandler(async (req: Request, res: Response) => {
+router.get('/:id', authenticateSupabaseToken, asyncHandler(async (req: Request, res: Response) => {
   const { user } = req as AuthenticatedRequest;
   const sessionId = req.params.id;
 
@@ -288,7 +288,7 @@ router.get('/:id', authenticateToken, asyncHandler(async (req: Request, res: Res
 }));
 
 // PUT /api/v1/sessions/:id - Update session
-router.put('/:id', authenticateToken, asyncHandler(async (req: Request, res: Response) => {
+router.put('/:id', authenticateSupabaseToken, asyncHandler(async (req: Request, res: Response) => {
   const { user } = req as AuthenticatedRequest;
   const sessionId = req.params.id;
   const validatedData = UpdateSessionSchema.parse(req.body);
@@ -384,7 +384,7 @@ router.put('/:id', authenticateToken, asyncHandler(async (req: Request, res: Res
 }));
 
 // DELETE /api/v1/sessions/:id - Cancel session
-router.delete('/:id', authenticateToken, asyncHandler(async (req: Request, res: Response) => {
+router.delete('/:id', authenticateSupabaseToken, asyncHandler(async (req: Request, res: Response) => {
   const { user } = req as AuthenticatedRequest;
   const sessionId = req.params.id;
   const { reason } = z.object({ reason: z.string().optional() }).parse(req.body);
@@ -437,7 +437,7 @@ router.delete('/:id', authenticateToken, asyncHandler(async (req: Request, res: 
 }));
 
 // POST /api/v1/sessions/:id/join - Join video session
-router.post('/:id/join', authenticateToken, asyncHandler(async (req: Request, res: Response) => {
+router.post('/:id/join', authenticateSupabaseToken, asyncHandler(async (req: Request, res: Response) => {
   const { user } = req as AuthenticatedRequest;
   const sessionId = req.params.id;
 
@@ -496,7 +496,7 @@ router.post('/:id/join', authenticateToken, asyncHandler(async (req: Request, re
 }));
 
 // POST /api/v1/sessions/:id/complete - Mark session complete
-router.post('/:id/complete', authenticateToken, asyncHandler(async (req: Request, res: Response) => {
+router.post('/:id/complete', authenticateSupabaseToken, asyncHandler(async (req: Request, res: Response) => {
   const { user } = req as AuthenticatedRequest;
   const sessionId = req.params.id;
   const { sessionNotes, homeworkAssigned } = z.object({

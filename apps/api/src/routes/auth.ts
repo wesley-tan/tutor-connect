@@ -1,270 +1,297 @@
 import express, { Request, Response } from 'express';
 import { prisma } from '@tutorconnect/database';
 import { asyncHandler, successResponse, ValidationError, ConflictError } from '../middleware/errorHandlers';
-import { 
-  hashPassword, 
-  comparePassword, 
-  generateTokens, 
-  verifyRefreshToken,
-  authenticateToken,
-  AuthenticatedRequest 
-} from '../utils/auth';
-import { 
-  RegisterSchema, 
-  LoginSchema, 
-  RefreshTokenSchema,
-  UpdateProfileSchema,
-  ChangePasswordSchema
-} from '../schemas/auth';
+import { ModernAuthService, AuthError } from '../services/authService';
 import { logger } from '../utils/logger';
+import { z } from 'zod';
+
+const authService = new ModernAuthService(
+  prisma,
+  process.env.JWT_SECRET!,
+  process.env.JWT_REFRESH_SECRET!
+);
 
 const router = express.Router();
 
-// Register new user
+// Register new user (without password)
 router.post('/register', asyncHandler(async (req: Request, res: Response) => {
-  // Validate input
-  const validatedData = RegisterSchema.parse(req.body);
-  
-  // Check if user already exists
-  const existingUser = await prisma.user.findUnique({
-    where: { email: validatedData.email }
+  const schema = z.object({
+    email: z.string().email(),
+    firstName: z.string().min(1).max(50),
+    lastName: z.string().min(1).max(50),
+    userType: z.enum(['student', 'tutor']),
+    phone: z.string().optional()
   });
+
+  const validatedData = schema.parse(req.body);
   
-  if (existingUser) {
-    throw new ConflictError('User with this email already exists');
-  }
-  
-  // Hash password
-  const passwordHash = await hashPassword(validatedData.password);
-  
-  // Create user
-  const user = await prisma.user.create({
-    data: {
+  try {
+    const result = await authService.registerUser({
       email: validatedData.email,
-      passwordHash,
       firstName: validatedData.firstName,
       lastName: validatedData.lastName,
       userType: validatedData.userType,
-      phone: validatedData.phone,
-      timezone: validatedData.timezone || 'UTC'
-    },
-    select: {
-      id: true,
-      email: true,
-      firstName: true,
-      lastName: true,
-      userType: true,
-      phone: true,
-      timezone: true,
-      isVerified: true,
-      createdAt: true
+      phone: validatedData.phone
+    });
+    
+    logger.info('User registered successfully', { 
+      userId: result.user.id, 
+      email: result.user.email, 
+      userType: result.user.userType 
+    });
+    
+    successResponse(res, {
+      user: {
+        id: result.user.id,
+        email: result.user.email,
+        firstName: result.user.firstName,
+        lastName: result.user.lastName,
+        userType: result.user.userType,
+        phone: result.user.phone,
+        isVerified: result.user.isVerified,
+        createdAt: result.user.createdAt
+      },
+      tokens: {
+        accessToken: result.accessToken,
+        refreshToken: result.refreshToken
+      }
+    }, 'Registration successful', 201);
+  } catch (error) {
+    if (error instanceof AuthError && error.code === 'USER_EXISTS') {
+      throw new ConflictError('User with this email already exists');
     }
-  });
-  
-  // Generate tokens
-  const tokens = generateTokens({
-    id: user.id,
-    email: user.email,
-    userType: user.userType
-  });
-  
-  logger.info('User registered successfully', { 
-    userId: user.id, 
-    email: user.email, 
-    userType: user.userType 
-  });
-  
-  successResponse(res, {
-    user,
-    tokens
-  }, 'Registration successful', 201);
+    throw error;
+  }
 }));
 
-// Login user
-router.post('/login', asyncHandler(async (req: Request, res: Response) => {
-  // Validate input
-  const { email, password } = LoginSchema.parse(req.body);
+// Google OAuth Authentication
+router.post('/google', asyncHandler(async (req: Request, res: Response) => {
+  const schema = z.object({
+    idToken: z.string()
+  });
+
+  const { idToken } = schema.parse(req.body);
   
-  // Find user
-  const user = await prisma.user.findUnique({
-    where: { email },
-    select: {
-      id: true,
-      email: true,
-      passwordHash: true,
-      firstName: true,
-      lastName: true,
-      userType: true,
-      phone: true,
-      timezone: true,
-      isVerified: true,
-      isActive: true,
-      createdAt: true
+  try {
+    const result = await authService.authenticateWithGoogle(idToken);
+    
+    logger.info('Google authentication successful', { 
+      userId: result.user.id, 
+      email: result.user.email 
+    });
+    
+    successResponse(res, {
+      user: {
+        id: result.user.id,
+        email: result.user.email,
+        firstName: result.user.firstName,
+        lastName: result.user.lastName,
+        userType: result.user.userType,
+        phone: result.user.phone,
+        profileImageUrl: result.user.profileImageUrl,
+        isVerified: result.user.isVerified,
+        createdAt: result.user.createdAt
+      },
+      tokens: {
+        accessToken: result.accessToken,
+        refreshToken: result.refreshToken
+      }
+    }, 'Google authentication successful');
+  } catch (error) {
+    if (error instanceof AuthError) {
+      throw new ValidationError(error.message);
     }
-  });
-  
-  if (!user) {
-    throw new ValidationError('Invalid email or password');
+    throw error;
   }
-  
-  if (!user.isActive) {
-    throw new ValidationError('Account is deactivated');
-  }
-  
-  // Verify password
-  const isValidPassword = await comparePassword(password, user.passwordHash);
-  if (!isValidPassword) {
-    throw new ValidationError('Invalid email or password');
-  }
-  
-  // Generate tokens
-  const tokens = generateTokens({
-    id: user.id,
-    email: user.email,
-    userType: user.userType
-  });
-  
-  // Remove password hash from response
-  const { passwordHash, ...userResponse } = user;
-  
-  logger.info('User logged in successfully', { 
-    userId: user.id, 
-    email: user.email,
-    ip: req.ip 
-  });
-  
-  successResponse(res, {
-    user: userResponse,
-    tokens
-  }, 'Login successful');
 }));
 
-// Refresh access token
+// Sync user from Supabase
+router.post('/sync-supabase', asyncHandler(async (req: Request, res: Response) => {
+  const schema = z.object({
+    supabaseUser: z.object({
+      id: z.string(),
+      email: z.string().email(),
+      user_metadata: z.object({
+        firstName: z.string().optional(),
+        lastName: z.string().optional(),
+        userType: z.enum(['student', 'tutor']).optional()
+      }).optional()
+    })
+  });
+
+  const { supabaseUser } = schema.parse(req.body);
+  
+  try {
+    const user = await authService.syncUserFromSupabase(supabaseUser);
+    
+    logger.info('User synced from Supabase', { 
+      userId: user.id, 
+      email: user.email 
+    });
+    
+    successResponse(res, {
+      user: {
+        id: user.id,
+        email: user.email,
+        firstName: user.firstName,
+        lastName: user.lastName,
+        userType: user.userType,
+        phone: user.phone,
+        profileImageUrl: user.profileImageUrl,
+        isVerified: user.isVerified,
+        createdAt: user.createdAt
+      }
+    }, 'User synced successfully');
+  } catch (error) {
+    if (error instanceof AuthError) {
+      throw new ValidationError(error.message);
+    }
+    throw error;
+  }
+}));
+
+// Refresh Token
 router.post('/refresh', asyncHandler(async (req: Request, res: Response) => {
-  const { refreshToken } = RefreshTokenSchema.parse(req.body);
-  
-  // Verify refresh token
-  const payload = verifyRefreshToken(refreshToken);
-  
-  // Verify user still exists and is active
-  const user = await prisma.user.findUnique({
-    where: { id: payload.userId },
-    select: { id: true, email: true, userType: true, isActive: true }
+  const schema = z.object({
+    refreshToken: z.string()
   });
+
+  const { refreshToken } = schema.parse(req.body);
   
-  if (!user || !user.isActive) {
-    throw new ValidationError('Invalid refresh token');
+  try {
+    const result = await authService.refreshToken(refreshToken);
+    
+    successResponse(res, {
+      user: {
+        id: result.user.id,
+        email: result.user.email,
+        firstName: result.user.firstName,
+        lastName: result.user.lastName,
+        userType: result.user.userType,
+        phone: result.user.phone,
+        isVerified: result.user.isVerified,
+        createdAt: result.user.createdAt
+      },
+      tokens: {
+        accessToken: result.accessToken,
+        refreshToken: result.refreshToken
+      }
+    }, 'Token refreshed successfully');
+  } catch (error) {
+    if (error instanceof AuthError) {
+      throw new ValidationError(error.message);
+    }
+    throw error;
   }
-  
-  // Generate new tokens
-  const tokens = generateTokens({
-    id: user.id,
-    email: user.email,
-    userType: user.userType
-  });
-  
-  successResponse(res, { tokens }, 'Token refreshed successfully');
 }));
 
 // Get current user profile
-router.get('/profile', authenticateToken, asyncHandler(async (req: Request, res: Response) => {
-  const { user: authUser } = req as AuthenticatedRequest;
+router.get('/profile', asyncHandler(async (req: Request, res: Response) => {
+  const token = req.headers.authorization?.replace('Bearer ', '');
   
-  const user = await prisma.user.findUnique({
-    where: { id: authUser.id },
-    select: {
-      id: true,
-      email: true,
-      firstName: true,
-      lastName: true,
-      userType: true,
-      phone: true,
-      profileImageUrl: true,
-      timezone: true,
-      isVerified: true,
-      createdAt: true,
-      updatedAt: true
-    }
-  });
-  
-  if (!user) {
-    throw new ValidationError('User not found');
+  if (!token) {
+    throw new ValidationError('No token provided');
   }
   
-  successResponse(res, { user }, 'Profile retrieved successfully');
+  try {
+    const user = await authService.verifyToken(token);
+    
+    successResponse(res, {
+      user: {
+        id: user.id,
+        email: user.email,
+        firstName: user.firstName,
+        lastName: user.lastName,
+        userType: user.userType,
+        phone: user.phone,
+        profileImageUrl: user.profileImageUrl,
+        isVerified: user.isVerified,
+        createdAt: user.createdAt
+      }
+    }, 'Profile retrieved successfully');
+  } catch (error) {
+    if (error instanceof AuthError) {
+      throw new ValidationError(error.message);
+    }
+    throw error;
+  }
 }));
 
 // Update user profile
-router.put('/profile', authenticateToken, asyncHandler(async (req: Request, res: Response) => {
-  const { user: authUser } = req as AuthenticatedRequest;
-  const validatedData = UpdateProfileSchema.parse(req.body);
+router.put('/profile', asyncHandler(async (req: Request, res: Response) => {
+  const token = req.headers.authorization?.replace('Bearer ', '');
   
-  const updatedUser = await prisma.user.update({
-    where: { id: authUser.id },
-    data: validatedData,
-    select: {
-      id: true,
-      email: true,
-      firstName: true,
-      lastName: true,
-      userType: true,
-      phone: true,
-      profileImageUrl: true,
-      timezone: true,
-      isVerified: true,
-      updatedAt: true
+  if (!token) {
+    throw new ValidationError('No token provided');
+  }
+  
+  const schema = z.object({
+    firstName: z.string().min(1).max(50).optional(),
+    lastName: z.string().min(1).max(50).optional(),
+    phone: z.string().optional(),
+    userType: z.enum(['student', 'tutor']).optional()
+  });
+
+  const validatedData = schema.parse(req.body);
+  
+  try {
+    const user = await authService.verifyToken(token);
+    
+    // Filter out undefined values
+    const updateData = Object.fromEntries(
+      Object.entries(validatedData).filter(([_, value]) => value !== undefined)
+    );
+    
+    const updatedUser = await prisma.user.update({
+      where: { id: user.id },
+      data: updateData,
+      select: {
+        id: true,
+        email: true,
+        firstName: true,
+        lastName: true,
+        userType: true,
+        phone: true,
+        profileImageUrl: true,
+        isVerified: true,
+        createdAt: true
+      }
+    });
+    
+    logger.info('Profile updated', { userId: user.id });
+    
+    successResponse(res, {
+      user: updatedUser
+    }, 'Profile updated successfully');
+  } catch (error) {
+    if (error instanceof AuthError) {
+      throw new ValidationError(error.message);
     }
-  });
-  
-  logger.info('User profile updated', { userId: authUser.id });
-  
-  successResponse(res, { user: updatedUser }, 'Profile updated successfully');
+    throw error;
+  }
 }));
 
-// Change password
-router.put('/password', authenticateToken, asyncHandler(async (req: Request, res: Response) => {
-  const { user: authUser } = req as AuthenticatedRequest;
-  const { currentPassword, newPassword } = ChangePasswordSchema.parse(req.body);
+// Logout
+router.post('/logout', asyncHandler(async (req: Request, res: Response) => {
+  const token = req.headers.authorization?.replace('Bearer ', '');
   
-  // Get current password hash
-  const user = await prisma.user.findUnique({
-    where: { id: authUser.id },
-    select: { passwordHash: true }
-  });
-  
-  if (!user) {
-    throw new ValidationError('User not found');
+  if (!token) {
+    throw new ValidationError('No token provided');
   }
   
-  // Verify current password
-  const isValidPassword = await comparePassword(currentPassword, user.passwordHash);
-  if (!isValidPassword) {
-    throw new ValidationError('Current password is incorrect');
+  try {
+    const user = await authService.verifyToken(token);
+    await authService.logout(user.id);
+    
+    logger.info('User logged out', { userId: user.id });
+    
+    successResponse(res, {}, 'Logged out successfully');
+  } catch (error) {
+    if (error instanceof AuthError) {
+      throw new ValidationError(error.message);
+    }
+    throw error;
   }
-  
-  // Hash new password
-  const newPasswordHash = await hashPassword(newPassword);
-  
-  // Update password
-  await prisma.user.update({
-    where: { id: authUser.id },
-    data: { passwordHash: newPasswordHash }
-  });
-  
-  logger.info('User password changed', { userId: authUser.id });
-  
-  successResponse(res, null, 'Password changed successfully');
-}));
-
-// Logout (for future session tracking)
-router.post('/logout', authenticateToken, asyncHandler(async (req: Request, res: Response) => {
-  const { user: authUser } = req as AuthenticatedRequest;
-  
-  // For now, just log the logout
-  // In the future, we could invalidate tokens in Redis
-  logger.info('User logged out', { userId: authUser.id });
-  
-  successResponse(res, null, 'Logout successful');
 }));
 
 export default router; 
