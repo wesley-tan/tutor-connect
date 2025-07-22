@@ -1,7 +1,12 @@
 import winston from 'winston';
-import 'winston-daily-rotate-file';
 
-const { combine, timestamp, json, errors, prettyPrint } = winston.format;
+const colors = {
+  error: 'red',
+  warn: 'yellow',
+  info: 'green',
+  http: 'magenta',
+  debug: 'white'
+};
 
 // Define log levels
 const levels = {
@@ -9,84 +14,53 @@ const levels = {
   warn: 1,
   info: 2,
   http: 3,
-  debug: 4,
+  debug: 4
 };
 
-// Define level based on environment
-const level = () => {
-  const env = process.env.NODE_ENV || 'development';
-  const isDevelopment = env === 'development';
-  return isDevelopment ? 'debug' : 'info';
-};
-
-// Define colors for each level
-const colors = {
-  error: 'red',
-  warn: 'yellow',
-  info: 'green',
-  http: 'magenta',
-  debug: 'blue',
-};
-
-// Add colors to winston
-winston.addColors(colors);
+// Define custom format
+const customFormat = winston.format.combine(
+  winston.format.timestamp({ format: 'YYYY-MM-DD HH:mm:ss.SSS' }),
+  winston.format.json({
+    replacer: (key, value) => {
+      if (value instanceof Error) {
+        const { name, message, stack, ...rest } = value;
+        return {
+          name,
+          message,
+          stack,
+          ...rest
+        };
+      }
+      return value;
+    }
+  })
+);
 
 // Create the logger
 export const logger = winston.createLogger({
-  level: level(),
+  level: process.env.NODE_ENV === 'production' ? 'info' : 'debug',
   levels,
-  format: combine(
-    timestamp({ format: 'YYYY-MM-DD HH:mm:ss.SSS' }),
-    errors({ stack: true }),
-    json(),
-    prettyPrint()
-  ),
+  format: customFormat,
   defaultMeta: {
     service: 'tutorconnect-api',
     environment: process.env.NODE_ENV || 'development',
     version: '1.0.0'
   },
   transports: [
-    // Write all logs to console
     new winston.transports.Console({
       format: winston.format.combine(
         winston.format.colorize({ all: true }),
         winston.format.simple()
-      ),
-    }),
-
-    // Write all logs with level 'info' and below to combined.log
-    new winston.transports.DailyRotateFile({
-      filename: 'logs/combined-%DATE%.log',
-      datePattern: 'YYYY-MM-DD',
-      maxSize: '20m',
-      maxFiles: '14d',
-      level: 'info',
-    }),
-
-    // Write all errors to error.log
-    new winston.transports.DailyRotateFile({
-      filename: 'logs/error-%DATE%.log',
-      datePattern: 'YYYY-MM-DD',
-      maxSize: '20m',
-      maxFiles: '14d',
-      level: 'error',
-    }),
-  ],
-  // Handle uncaught exceptions and unhandled rejections
-  exceptionHandlers: [
-    new winston.transports.File({ filename: 'logs/exceptions.log' }),
-  ],
-  rejectionHandlers: [
-    new winston.transports.File({ filename: 'logs/rejections.log' }),
-  ],
+      )
+    })
+  ]
 });
 
 // Create a stream object for Morgan
 export const stream = {
   write: (message: string) => {
     logger.http(message.trim());
-  },
+  }
 };
 
 // Export a function to create a child logger with additional context

@@ -246,7 +246,7 @@ router.post('/', mockAuth, asyncHandler(async (req: AuthenticatedRequest, res: R
     }
   });
 
-  successResponse(res, { conversation }, 'Conversation created successfully', 201);
+  return successResponse(res, { conversation }, 'Conversation created successfully', 201);
 }));
 
 // POST /api/v1/conversations/:id/messages - Send message
@@ -438,7 +438,13 @@ router.put('/:messageId/read', mockAuth, asyncHandler(async (req: AuthenticatedR
   });
 
   if (!message) {
-    throw new ValidationError('Message not found or access denied');
+    return res.status(404).json({
+      success: false,
+      error: {
+        code: 'NOT_FOUND',
+        message: 'Message not found or access denied'
+      }
+    });
   }
 
   // Don't mark own messages as read
@@ -455,7 +461,7 @@ router.put('/:messageId/read', mockAuth, asyncHandler(async (req: AuthenticatedR
     }
   });
 
-  successResponse(res, { message: updatedMessage }, 'Message marked as read');
+  return successResponse(res, { message: updatedMessage }, 'Message marked as read');
 }));
 
 // GET /api/v1/conversations/:id - Get conversation details
@@ -464,7 +470,13 @@ router.get('/:id', mockAuth, asyncHandler(async (req: Request, res: Response) =>
   const conversationId = req.params.id;
 
   if (!conversationId) {
-    throw new ValidationError('Conversation ID is required');
+    return res.status(400).json({
+      success: false,
+      error: {
+        code: 'VALIDATION_ERROR',
+        message: 'Conversation ID is required'
+      }
+    });
   }
 
   const conversation = await prisma.conversation.findUnique({
@@ -492,19 +504,33 @@ router.get('/:id', mockAuth, asyncHandler(async (req: Request, res: Response) =>
   });
 
   if (!conversation) {
-    throw new ValidationError('Conversation not found');
+    return res.status(404).json({
+      success: false,
+      error: {
+        code: 'NOT_FOUND',
+        message: 'Conversation not found'
+      }
+    });
   }
 
   // Verify user is participant
   const isParticipant = conversation.participantA === user.id || conversation.participantB === user.id;
   if (!isParticipant) {
-    throw new ValidationError('You are not authorized to view this conversation');
+    return res.status(403).json({
+      success: false,
+      error: {
+        code: 'FORBIDDEN',
+        message: 'You are not authorized to view this conversation'
+      }
+    });
   }
 
   // Get other participant
-  const otherParticipant = conversation.participantA === user.id ? conversation.userB : conversation.userA;
+  const otherParticipant = conversation.participantA === user.id 
+    ? conversation.userB 
+    : conversation.userA;
 
-  successResponse(res, { 
+  return successResponse(res, { 
     ...conversation, 
     otherParticipant 
   }, 'Conversation details retrieved successfully');

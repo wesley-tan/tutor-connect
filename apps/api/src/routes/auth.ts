@@ -10,7 +10,7 @@ router.get('/me', authenticateToken, async (req, res) => {
   try {
     const authenticatedReq = req as AuthenticatedRequest;
     const userId = authenticatedReq.user.id;
-
+    
     const user = await prisma.user.findUnique({
       where: { id: userId },
       select: {
@@ -45,12 +45,12 @@ router.get('/me', authenticateToken, async (req, res) => {
               select: {
                 subject: true,
                 urgencyLevel: true
-              }
+      }
             }
           }
         }
-      }
-    });
+  }
+});
 
     if (!user) {
       return res.status(404).json({

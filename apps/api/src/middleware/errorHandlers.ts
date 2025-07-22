@@ -1,115 +1,144 @@
 import { Request, Response, NextFunction } from 'express';
 import { logger } from '../utils/logger';
-import { Prisma } from '@prisma/client';
 import { ZodError } from 'zod';
+import { Prisma } from '@prisma/client';
 
-// Custom error classes
-export class ValidationError extends Error {
-  constructor(message: string) {
+export class AppError extends Error {
+  constructor(
+    public statusCode: number,
+    public code: string,
+    message: string,
+    public details?: any
+  ) {
     super(message);
-    this.name = 'ValidationError';
+    this.name = 'AppError';
   }
 }
 
-export class NotFoundError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = 'NotFoundError';
+export class AuthenticationError extends AppError {
+  constructor(message: string = 'Authentication failed', code: string = 'AUTHENTICATION_ERROR') {
+    super(401, code, message);
   }
 }
 
-export class AuthenticationError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = 'AuthenticationError';
+export class AuthorizationError extends AppError {
+  constructor(message: string = 'Not authorized', code: string = 'AUTHORIZATION_ERROR') {
+    super(403, code, message);
   }
 }
 
-// Success response helper
+export class ValidationError extends AppError {
+  constructor(message: string = 'Validation failed', details?: any) {
+    super(400, 'VALIDATION_ERROR', message, details);
+  }
+}
+
+export class NotFoundError extends AppError {
+  constructor(resource: string = 'Resource') {
+    super(404, 'NOT_FOUND', `${resource} not found`);
+  }
+}
+
 export const successResponse = (
   res: Response,
   data: any,
-  message: string = 'Success',
-  status: number = 200
+  message?: string,
+  statusCode: number = 200
 ) => {
-  return res.status(status).json({
+  return res.status(statusCode).json({
     success: true,
-    message,
-    ...data
+    message: message || 'Operation successful',
+    data
   });
 };
 
-// Async handler wrapper
+export function paginatedResponse(
+  res: Response,
+  data: any[],
+  total: number,
+  page: number,
+  limit: number,
+  message?: string
+) {
+  return res.json({
+    success: true,
+    data,
+    pagination: {
+      page,
+      limit,
+      total,
+      totalPages: Math.ceil(total / limit)
+    },
+    message
+  });
+}
+
 export const asyncHandler = (fn: Function) => (req: Request, res: Response, next: NextFunction) => {
   Promise.resolve(fn(req, res, next)).catch(next);
 };
 
-// Global error handler
-export const errorHandler = (err: any, req: Request, res: Response, next: NextFunction) => {
+export function errorHandler(err: any, req: Request, res: Response, next: NextFunction) {
   logger.error('Error:', {
-    name: err.name,
-    message: err.message,
-    stack: err.stack,
+    error: err,
     path: req.path,
-    method: req.method
+    method: req.method,
+    ip: req.ip,
+    userId: (req as any).user?.id
   });
 
-  // Handle specific error types
-  if (err instanceof ValidationError) {
-    return res.status(400).json({
+  // Handle known errors
+  if (err instanceof AppError) {
+    return res.status(err.statusCode).json({
       success: false,
-      message: err.message,
-      error: 'Validation Error'
+      error: {
+        code: err.code,
+        message: err.message,
+        details: err.details
+      }
     });
   }
 
-  if (err instanceof NotFoundError) {
-    return res.status(404).json({
-      success: false,
-      message: err.message,
-      error: 'Not Found'
-    });
-  }
-
-  if (err instanceof AuthenticationError) {
-    return res.status(401).json({
-      success: false,
-      message: err.message,
-      error: 'Authentication Error'
-    });
-  }
-
+  // Handle Zod validation errors
   if (err instanceof ZodError) {
     return res.status(400).json({
       success: false,
-      message: 'Validation failed',
-      errors: err.errors.map(e => ({
-        field: e.path.join('.'),
-        message: e.message
-      }))
+      error: {
+        code: 'VALIDATION_ERROR',
+        message: 'Validation failed',
+        details: err.errors
+      }
     });
   }
 
   // Handle Prisma errors
   if (err instanceof Prisma.PrismaClientKnownRequestError) {
     switch (err.code) {
-      case 'P2002': // Unique constraint violation
+      case 'P2002':
         return res.status(409).json({
           success: false,
-          message: 'A record with this value already exists',
-          error: 'Duplicate Entry'
+          error: {
+            code: 'DUPLICATE_ERROR',
+            message: 'A record with this value already exists',
+            details: err.meta
+          }
         });
-      case 'P2025': // Record not found
+      case 'P2025':
         return res.status(404).json({
           success: false,
-          message: 'Record not found',
-          error: 'Not Found'
+          error: {
+            code: 'NOT_FOUND',
+            message: 'Record not found',
+            details: err.meta
+          }
         });
       default:
+        logger.error('Prisma error:', err);
         return res.status(500).json({
           success: false,
-          message: 'Database operation failed',
-          error: 'Database Error'
+          error: {
+            code: 'DATABASE_ERROR',
+            message: 'Database operation failed'
+          }
         });
     }
   }
@@ -117,40 +146,15 @@ export const errorHandler = (err: any, req: Request, res: Response, next: NextFu
   // Handle unknown errors
   return res.status(500).json({
     success: false,
-    message: 'An unexpected error occurred',
-    error: 'Internal Server Error'
+    error: {
+      code: 'INTERNAL_ERROR',
+      message: 'An unexpected error occurred'
+    }
   });
-};
+}
 
 // 404 handler
 export const notFoundHandler = (req: Request, res: Response, next: NextFunction) => {
   const error = new NotFoundError(`Route ${req.method} ${req.url} not found`);
   next(error);
-};
-
-// Pagination response helper
-export const paginatedResponse = (
-  res: Response,
-  data: any[],
-  total: number,
-  page: number,
-  limit: number,
-  message: string = 'Success'
-) => {
-  const totalPages = Math.ceil(total / limit);
-  
-  res.status(200).json({
-    success: true,
-    message,
-    data,
-    pagination: {
-      page,
-      limit,
-      total,
-      totalPages,
-      hasNext: page < totalPages,
-      hasPrev: page > 1
-    },
-    timestamp: new Date().toISOString()
-  });
 }; 

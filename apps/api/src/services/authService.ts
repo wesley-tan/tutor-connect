@@ -1,5 +1,5 @@
-import { PrismaClient } from '@tutorconnect/database';
-import { createClient } from '@supabase/supabase-js';
+import { PrismaClient, Prisma } from '@tutorconnect/database';
+import { createClient, User as SupabaseUser } from '@supabase/supabase-js';
 import { OAuth2Client } from 'google-auth-library';
 import { logger } from '../utils/logger';
 
@@ -7,6 +7,7 @@ export class AuthService {
   private prisma: PrismaClient;
   private supabase: ReturnType<typeof createClient>;
   private googleClient: OAuth2Client;
+  private googleClientId: string;
 
   constructor() {
     this.prisma = new PrismaClient();
@@ -19,36 +20,58 @@ export class AuthService {
     }
     
     this.supabase = createClient(supabaseUrl, supabaseServiceKey);
-    this.googleClient = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
+
+    const googleClientId = process.env.GOOGLE_CLIENT_ID;
+    if (!googleClientId) {
+      throw new Error('Missing Google client ID');
+    }
+    this.googleClientId = googleClientId;
+    this.googleClient = new OAuth2Client(googleClientId);
   }
 
   async authenticateWithGoogle(idToken: string) {
     try {
       const ticket = await this.googleClient.verifyIdToken({
         idToken,
-        audience: process.env.GOOGLE_CLIENT_ID || []
+        audience: this.googleClientId
       });
 
-      const payload = ticket.getPayload()!;
+      const payload = ticket.getPayload();
+      if (!payload || !payload.email) {
+        throw new Error('Invalid Google token payload');
+      }
       
       // Find or create user
       let user = await this.prisma.user.findUnique({
-        where: { email: payload.email! }
+        where: { email: payload.email }
       });
 
       if (!user) {
-        user = await this.prisma.user.create({
-          data: {
-            email: payload.email!,
-            firstName: payload.given_name!,
-            lastName: payload.family_name!,
-            profileImageUrl: payload.picture || null,
-            userType: 'student', // Default to student, can be changed later
-            isVerified: true,
-            passwordHash: '' // Not needed for OAuth
-          }
+        // Create user and role in a transaction
+        const result = await this.prisma.$transaction(async (prisma) => {
+          // Create user
+          const newUser = await prisma.user.create({
+            data: {
+              email: payload.email,
+              firstName: payload.given_name || '',
+              lastName: payload.family_name || '',
+              profileImageUrl: payload.picture || null,
+              userType: 'student', // Default to student, can be changed later
+              isVerified: true,
+              passwordHash: '', // Not needed for OAuth
+              supabaseId: 'temp', // Will be updated after Supabase user creation
+              roles: {
+                create: {
+                  name: 'student'
+                }
+              }
+            } as Prisma.UserCreateInput
+          });
+
+          return newUser;
         });
 
+        user = result;
         logger.info('Created new user via Google OAuth', {
           userId: user.id,
           email: user.email
@@ -75,8 +98,16 @@ export class AuthService {
         throw supabaseError;
       }
 
+      // Update user with Supabase ID
+      const updatedUser = await this.prisma.user.update({
+        where: { id: user.id },
+        data: {
+          supabaseId: (supabaseUser.user as SupabaseUser).id
+        } as Prisma.UserUpdateInput
+      });
+
       return {
-        user,
+        user: updatedUser,
         session: supabaseUser
       };
     } catch (error) {
@@ -106,17 +137,30 @@ export class AuthService {
       });
 
       if (!user) {
-        user = await this.prisma.user.create({
-          data: {
-            email,
-            firstName: '',
-            lastName: '',
-            userType: 'student', // Default to student, can be changed later
-            isVerified: false,
-            passwordHash: '' // Not needed for magic links
-          }
+        // Create user and role in a transaction
+        const result = await this.prisma.$transaction(async (prisma) => {
+          // Create user
+          const newUser = await prisma.user.create({
+            data: {
+              email,
+              firstName: '',
+              lastName: '',
+              userType: 'student', // Default to student, can be changed later
+              isVerified: false,
+              passwordHash: '', // Not needed for magic links
+              supabaseId: 'temp', // Will be updated after Supabase user creation
+              roles: {
+                create: {
+                  name: 'student'
+                }
+              }
+            } as Prisma.UserCreateInput
+          });
+
+          return newUser;
         });
 
+        user = result;
         logger.info('Created new user for magic link', {
           userId: user.id,
           email
@@ -135,33 +179,33 @@ export class AuthService {
 
   async verifySession(token: string) {
     try {
-      const { data: { user }, error } = await this.supabase.auth.getUser(token);
+      const { data: { user: supabaseUser }, error } = await this.supabase.auth.getUser(token);
 
       if (error) {
         logger.error('Error verifying session', { error });
         throw error;
       }
 
-      if (!user) {
+      if (!supabaseUser) {
         logger.error('No user found for session');
         throw new Error('Invalid session');
       }
 
       // Get user from database
       const dbUser = await this.prisma.user.findUnique({
-        where: { email: user.email! }
+        where: { email: supabaseUser.email! }
       });
 
       if (!dbUser) {
         logger.error('No database user found for session', {
-          email: user.email
+          email: supabaseUser.email
         });
         throw new Error('User not found');
       }
 
       return {
         user: dbUser,
-        session: user
+        session: supabaseUser
       };
     } catch (error) {
       logger.error('Error in session verification', { error });

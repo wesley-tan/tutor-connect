@@ -1,14 +1,14 @@
 import { Router, Response, Request } from 'express';
 import { prisma } from '@tutorconnect/database';
 import { logger } from '../utils/logger';
-import { mockAuth, AuthenticatedRequest } from '../utils/supabaseAuth';
+import { authenticateToken, AuthenticatedRequest } from '../utils/supabaseAuth';
 import { Prisma } from '@tutorconnect/database';
 import { asyncHandler, successResponse } from '../middleware/errorHandlers';
 
 const router = Router();
 
 // Get all conversations for the authenticated user
-router.get('/conversations', mockAuth, asyncHandler(async (req: Request, res: Response) => {
+router.get('/conversations', authenticateToken, asyncHandler(async (req: Request, res: Response) => {
   const { user } = req as AuthenticatedRequest;
   
   const conversations = await prisma.conversation.findMany({
@@ -17,7 +17,7 @@ router.get('/conversations', mockAuth, asyncHandler(async (req: Request, res: Re
         { participantA: user.id },
         { participantB: user.id }
       ]
-    } as Prisma.ConversationWhereInput,
+    },
     include: {
       userA: {
         select: {
@@ -76,7 +76,7 @@ router.get('/conversations', mockAuth, asyncHandler(async (req: Request, res: Re
 }));
 
 // Get messages for a specific conversation
-router.get('/conversations/:conversationId/messages', mockAuth, asyncHandler(async (req: Request, res: Response) => {
+router.get('/conversations/:conversationId/messages', authenticateToken, asyncHandler(async (req: Request, res: Response) => {
   const { conversationId } = req.params;
   const { user } = req as AuthenticatedRequest;
 
@@ -95,7 +95,7 @@ router.get('/conversations/:conversationId/messages', mockAuth, asyncHandler(asy
         { participantA: user.id },
         { participantB: user.id }
       ]
-    } as Prisma.ConversationWhereInput
+    }
   });
 
   if (!conversation) {
@@ -108,7 +108,7 @@ router.get('/conversations/:conversationId/messages', mockAuth, asyncHandler(asy
   const messages = await prisma.message.findMany({
     where: {
       conversationId
-    } as Prisma.MessageWhereInput,
+    },
     include: {
       sender: {
         select: {
@@ -128,7 +128,7 @@ router.get('/conversations/:conversationId/messages', mockAuth, asyncHandler(asy
 }));
 
 // Send a new message
-router.post('/conversations/:conversationId/messages', mockAuth, asyncHandler(async (req: Request, res: Response) => {
+router.post('/conversations/:conversationId/messages', authenticateToken, asyncHandler(async (req: Request, res: Response) => {
   const { conversationId } = req.params;
   const { content } = req.body;
   const { user } = req as AuthenticatedRequest;
@@ -155,7 +155,7 @@ router.post('/conversations/:conversationId/messages', mockAuth, asyncHandler(as
         { participantA: user.id },
         { participantB: user.id }
       ]
-    } as Prisma.ConversationWhereInput
+    }
   });
 
   if (!conversation) {
@@ -194,7 +194,7 @@ router.post('/conversations/:conversationId/messages', mockAuth, asyncHandler(as
 
   // Update conversation's lastMessageAt
   await prisma.conversation.update({
-    where: { id: conversationId } as Prisma.ConversationWhereUniqueInput,
+    where: { id: conversationId },
     data: { lastMessageAt: new Date() }
   });
 
@@ -202,7 +202,7 @@ router.post('/conversations/:conversationId/messages', mockAuth, asyncHandler(as
 }));
 
 // Create a new conversation
-router.post('/conversations', mockAuth, asyncHandler(async (req: Request, res: Response) => {
+router.post('/conversations', authenticateToken, asyncHandler(async (req: Request, res: Response) => {
   const { participantBId } = req.body;
   const { user } = req as AuthenticatedRequest;
 
@@ -233,7 +233,7 @@ router.post('/conversations', mockAuth, asyncHandler(async (req: Request, res: R
           participantB: user.id
         }
       ]
-    } as Prisma.ConversationWhereInput
+    }
   });
 
   if (existingConversation) {
@@ -272,7 +272,7 @@ router.post('/conversations', mockAuth, asyncHandler(async (req: Request, res: R
 }));
 
 // Mark messages as read
-router.put('/conversations/:conversationId/read', mockAuth, asyncHandler(async (req: Request, res: Response) => {
+router.put('/conversations/:conversationId/read', authenticateToken, asyncHandler(async (req: Request, res: Response) => {
   const { conversationId } = req.params;
   const { user } = req as AuthenticatedRequest;
 
@@ -291,7 +291,7 @@ router.put('/conversations/:conversationId/read', mockAuth, asyncHandler(async (
         { participantA: user.id },
         { participantB: user.id }
       ]
-    } as Prisma.ConversationWhereInput
+    }
   });
 
   if (!conversation) {
@@ -307,7 +307,7 @@ router.put('/conversations/:conversationId/read', mockAuth, asyncHandler(async (
       conversationId,
       senderId: { not: user.id },
       isRead: false
-    } as Prisma.MessageWhereInput,
+    },
     data: {
       isRead: true,
       readAt: new Date()

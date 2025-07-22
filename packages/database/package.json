@@ -21,7 +21,8 @@
   },
   "dependencies": {
     "@prisma/client": "^5.4.2",
-    "bcryptjs": "^2.4.3"
+    "bcryptjs": "^2.4.3",
+    "google-auth-library": "^10.1.0"
   },
   "devDependencies": {
     "@types/bcryptjs": "^2.4.4",
@@ -33,4 +34,4 @@
   "prisma": {
     "seed": "tsx prisma/seed.ts"
   }
-} 
+}

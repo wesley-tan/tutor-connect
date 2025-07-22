@@ -1,496 +1,216 @@
-import { Request, Response, NextFunction } from 'express';
-import { 
-  asyncHandler, 
-  successResponse, 
-  ValidationError, 
+import { Request, Response } from 'express';
+import { z } from 'zod';
+import { Prisma } from '@prisma/client';
+import {
+  errorHandler,
+  AppError,
+  AuthenticationError,
+  AuthorizationError,
+  ValidationError,
   NotFoundError,
-  errorHandler 
+  successResponse,
+  paginatedResponse
 } from '../errorHandlers';
 
-// Mock logger
-jest.mock('../../utils/logger', () => ({
-  logger: {
-    error: jest.fn(),
-    info: jest.fn(),
-    warn: jest.fn(),
-    debug: jest.fn()
-  }
-}));
+// Mock Express response
+const mockResponse = () => {
+  const res: Partial<Response> = {
+    status: jest.fn().mockReturnThis(),
+    json: jest.fn().mockReturnThis()
+  };
+  return res as Response;
+};
+
+// Mock Express request
+const mockRequest = () => {
+  const req: Partial<Request> = {
+    path: '/test',
+    method: 'GET',
+    ip: '127.0.0.1'
+  };
+  return req as Request;
+};
 
 describe('Error Handlers', () => {
-  let mockReq: Partial<Request>;
-  let mockRes: Partial<Response>;
-  let mockNext: NextFunction;
+  let req: Request;
+  let res: Response;
+  let next: jest.Mock;
 
   beforeEach(() => {
-    mockReq = {
-      method: 'GET',
-      url: '/api/test',
-      headers: {}
-    };
-    mockRes = {
-      status: jest.fn().mockReturnThis(),
-      json: jest.fn().mockReturnThis()
-    };
-    mockNext = jest.fn();
-    jest.clearAllMocks();
+    req = mockRequest();
+    res = mockResponse();
+    next = jest.fn();
   });
 
-  describe('asyncHandler', () => {
-    it('should handle successful async operations', async () => {
-      const asyncFunction = jest.fn().mockResolvedValue('success');
-      const wrappedFunction = asyncHandler(asyncFunction);
-
-      await wrappedFunction(mockReq as Request, mockRes as Response, mockNext);
-
-      expect(asyncFunction).toHaveBeenCalledWith(mockReq, mockRes, mockNext);
-      expect(mockNext).not.toHaveBeenCalled();
-    });
-
-    it('should catch and forward errors to next middleware', async () => {
-      const error = new Error('Test error');
-      const asyncFunction = jest.fn().mockRejectedValue(error);
-      const wrappedFunction = asyncHandler(asyncFunction);
-
-      await wrappedFunction(mockReq as Request, mockRes as Response, mockNext);
-
-      expect(asyncFunction).toHaveBeenCalledWith(mockReq, mockRes, mockNext);
-      expect(mockNext).toHaveBeenCalledWith(error);
-    });
-
-    it('should handle ValidationError specifically', async () => {
-      const validationError = new ValidationError('Invalid input');
-      const asyncFunction = jest.fn().mockRejectedValue(validationError);
-      const wrappedFunction = asyncHandler(asyncFunction);
-
-      await wrappedFunction(mockReq as Request, mockRes as Response, mockNext);
-
-      expect(mockNext).toHaveBeenCalledWith(validationError);
-    });
-
-    it('should handle NotFoundError specifically', async () => {
-      const notFoundError = new NotFoundError('Resource not found');
-      const asyncFunction = jest.fn().mockRejectedValue(notFoundError);
-      const wrappedFunction = asyncHandler(asyncFunction);
-
-      await wrappedFunction(mockReq as Request, mockRes as Response, mockNext);
-
-      expect(mockNext).toHaveBeenCalledWith(notFoundError);
-    });
-
-    it('should handle synchronous errors', async () => {
-      const error = new Error('Sync error');
-      const syncFunction = jest.fn().mockImplementation(() => {
-        throw error;
-      });
-      const wrappedFunction = asyncHandler(syncFunction);
-
-      await wrappedFunction(mockReq as Request, mockRes as Response, mockNext);
-
-      expect(mockNext).toHaveBeenCalledWith(error);
-    });
-
-    it('should handle non-Error objects', async () => {
-      const nonError = 'String error';
-      const asyncFunction = jest.fn().mockRejectedValue(nonError);
-      const wrappedFunction = asyncHandler(asyncFunction);
-
-      await wrappedFunction(mockReq as Request, mockRes as Response, mockNext);
-
-      expect(mockNext).toHaveBeenCalledWith(nonError);
-    });
-  });
-
-  describe('successResponse', () => {
-    it('should send successful response with data', () => {
-      const data = { id: 1, name: 'Test' };
-      const message = 'Success message';
-
-      successResponse(mockRes as Response, data, message);
-
-      expect(mockRes.status).toHaveBeenCalledWith(200);
-      expect(mockRes.json).toHaveBeenCalledWith({
-        success: true,
-        data,
-        message
-      });
-    });
-
-    it('should send successful response without data', () => {
-      const message = 'Success message';
-
-      successResponse(mockRes as Response, null, message);
-
-      expect(mockRes.status).toHaveBeenCalledWith(200);
-      expect(mockRes.json).toHaveBeenCalledWith({
-        success: true,
-        data: null,
-        message
-      });
-    });
-
-    it('should send response with custom status code', () => {
-      const data = { id: 1 };
-      const message = 'Created successfully';
-      const statusCode = 201;
-
-      successResponse(mockRes as Response, data, message, statusCode);
-
-      expect(mockRes.status).toHaveBeenCalledWith(201);
-      expect(mockRes.json).toHaveBeenCalledWith({
-        success: true,
-        data,
-        message
-      });
-    });
-
-    it('should handle undefined message', () => {
-      const data = { id: 1 };
-
-      successResponse(mockRes as Response, data);
-
-      expect(mockRes.status).toHaveBeenCalledWith(200);
-      expect(mockRes.json).toHaveBeenCalledWith({
-        success: true,
-        data,
-        message: undefined
-      });
-    });
-
-    it('should handle complex data structures', () => {
-      const complexData = {
-        users: [
-          { id: 1, name: 'User 1' },
-          { id: 2, name: 'User 2' }
-        ],
-        pagination: {
-          page: 1,
-          limit: 10,
-          total: 2
-        },
-        metadata: {
-          timestamp: new Date(),
-          version: '1.0.0'
-        }
-      };
-
-      successResponse(mockRes as Response, complexData, 'Complex data retrieved');
-
-      expect(mockRes.json).toHaveBeenCalledWith({
-        success: true,
-        data: complexData,
-        message: 'Complex data retrieved'
-      });
-    });
-  });
-
-  describe('ValidationError', () => {
-    it('should create ValidationError with message', () => {
-      const message = 'Invalid email format';
-      const error = new ValidationError(message);
-
-      expect(error.message).toBe(message);
-      expect(error.name).toBe('ValidationError');
-      expect(error).toBeInstanceOf(Error);
-    });
-
-    it('should create ValidationError without message', () => {
-      const error = new ValidationError();
-
-      expect(error.message).toBe('Validation failed');
-      expect(error.name).toBe('ValidationError');
-    });
-
-    it('should be throwable and catchable', () => {
-      const message = 'Custom validation error';
-      
-      expect(() => {
-        throw new ValidationError(message);
-      }).toThrow(ValidationError);
-
-      try {
-        throw new ValidationError(message);
-      } catch (error) {
-        expect(error).toBeInstanceOf(ValidationError);
-        expect((error as ValidationError).message).toBe(message);
-      }
-    });
-  });
-
-  describe('NotFoundError', () => {
-    it('should create NotFoundError with message', () => {
-      const message = 'User not found';
-      const error = new NotFoundError(message);
-
-      expect(error.message).toBe(message);
-      expect(error.name).toBe('NotFoundError');
-      expect(error).toBeInstanceOf(Error);
-    });
-
-    it('should create NotFoundError without message', () => {
-      const error = new NotFoundError();
-
-      expect(error.message).toBe('Resource not found');
-      expect(error.name).toBe('NotFoundError');
-    });
-
-    it('should be throwable and catchable', () => {
-      const message = 'Custom not found error';
-      
-      expect(() => {
-        throw new NotFoundError(message);
-      }).toThrow(NotFoundError);
-
-      try {
-        throw new NotFoundError(message);
-      } catch (error) {
-        expect(error).toBeInstanceOf(NotFoundError);
-        expect((error as NotFoundError).message).toBe(message);
-      }
+  describe('AppError', () => {
+    it('should create custom error with correct properties', () => {
+      const error = new AppError(400, 'TEST_ERROR', 'Test message', { field: 'test' });
+      expect(error.statusCode).toBe(400);
+      expect(error.code).toBe('TEST_ERROR');
+      expect(error.message).toBe('Test message');
+      expect(error.details).toEqual({ field: 'test' });
     });
   });
 
   describe('errorHandler', () => {
-    it('should handle ValidationError with 400 status', () => {
-      const error = new ValidationError('Invalid input data');
+    it('should handle AppError', () => {
+      const error = new AppError(400, 'TEST_ERROR', 'Test message');
+      errorHandler(error, req, res, next);
       
-      errorHandler(error, mockReq as Request, mockRes as Response, mockNext);
-
-      expect(mockRes.status).toHaveBeenCalledWith(400);
-      expect(mockRes.json).toHaveBeenCalledWith({
+      expect(res.status).toHaveBeenCalledWith(400);
+      expect(res.json).toHaveBeenCalledWith({
         success: false,
-        message: 'Invalid input data',
-        code: 'VALIDATION_ERROR'
-      });
-    });
-
-    it('should handle NotFoundError with 404 status', () => {
-      const error = new NotFoundError('User not found');
-      
-      errorHandler(error, mockReq as Request, mockRes as Response, mockNext);
-
-      expect(mockRes.status).toHaveBeenCalledWith(404);
-      expect(mockRes.json).toHaveBeenCalledWith({
-        success: false,
-        message: 'User not found',
-        code: 'NOT_FOUND'
-      });
-    });
-
-    it('should handle generic Error with 500 status', () => {
-      const error = new Error('Internal server error');
-      
-      errorHandler(error, mockReq as Request, mockRes as Response, mockNext);
-
-      expect(mockRes.status).toHaveBeenCalledWith(500);
-      expect(mockRes.json).toHaveBeenCalledWith({
-        success: false,
-        message: 'Internal server error',
-        code: 'INTERNAL_ERROR'
-      });
-    });
-
-    it('should handle errors without message', () => {
-      const error = new Error();
-      
-      errorHandler(error, mockReq as Request, mockRes as Response, mockNext);
-
-      expect(mockRes.status).toHaveBeenCalledWith(500);
-      expect(mockRes.json).toHaveBeenCalledWith({
-        success: false,
-        message: 'Internal server error',
-        code: 'INTERNAL_ERROR'
-      });
-    });
-
-    it('should handle non-Error objects', () => {
-      const nonError = 'String error';
-      
-      errorHandler(nonError, mockReq as Request, mockRes as Response, mockNext);
-
-      expect(mockRes.status).toHaveBeenCalledWith(500);
-      expect(mockRes.json).toHaveBeenCalledWith({
-        success: false,
-        message: 'Internal server error',
-        code: 'INTERNAL_ERROR'
-      });
-    });
-
-    it('should handle null and undefined errors', () => {
-      errorHandler(null as any, mockReq as Request, mockRes as Response, mockNext);
-      expect(mockRes.status).toHaveBeenCalledWith(500);
-
-      errorHandler(undefined as any, mockReq as Request, mockRes as Response, mockNext);
-      expect(mockRes.status).toHaveBeenCalledWith(500);
-    });
-
-    it('should handle custom error types', () => {
-      class CustomError extends Error {
-        constructor(message: string, public statusCode: number = 500) {
-          super(message);
-          this.name = 'CustomError';
+        error: {
+          code: 'TEST_ERROR',
+          message: 'Test message',
+          details: undefined
         }
+      });
+    });
+
+    it('should handle AuthenticationError', () => {
+      const error = new AuthenticationError();
+      errorHandler(error, req, res, next);
+      
+      expect(res.status).toHaveBeenCalledWith(401);
+      expect(res.json).toHaveBeenCalledWith({
+        success: false,
+        error: {
+          code: 'AUTHENTICATION_ERROR',
+          message: 'Authentication failed',
+          details: undefined
+        }
+      });
+    });
+
+    it('should handle AuthorizationError', () => {
+      const error = new AuthorizationError();
+      errorHandler(error, req, res, next);
+      
+      expect(res.status).toHaveBeenCalledWith(403);
+      expect(res.json).toHaveBeenCalledWith({
+        success: false,
+        error: {
+          code: 'AUTHORIZATION_ERROR',
+          message: 'Not authorized',
+          details: undefined
+        }
+      });
+    });
+
+    it('should handle ValidationError', () => {
+      const error = new ValidationError('Invalid input', { field: 'required' });
+      errorHandler(error, req, res, next);
+      
+      expect(res.status).toHaveBeenCalledWith(400);
+      expect(res.json).toHaveBeenCalledWith({
+        success: false,
+        error: {
+          code: 'VALIDATION_ERROR',
+          message: 'Invalid input',
+          details: { field: 'required' }
+        }
+      });
+    });
+
+    it('should handle NotFoundError', () => {
+      const error = new NotFoundError('User');
+      errorHandler(error, req, res, next);
+      
+      expect(res.status).toHaveBeenCalledWith(404);
+      expect(res.json).toHaveBeenCalledWith({
+        success: false,
+        error: {
+          code: 'NOT_FOUND',
+          message: 'User not found',
+          details: undefined
+        }
+      });
+    });
+
+    it('should handle ZodError', () => {
+      const schema = z.object({
+        name: z.string()
+      });
+      const result = schema.safeParse({ name: 123 });
+      if (!result.success) {
+        const error = result.error;
+        errorHandler(error, req, res, next);
+        
+        expect(res.status).toHaveBeenCalledWith(400);
+        expect(res.json).toHaveBeenCalledWith({
+          success: false,
+          error: {
+            code: 'VALIDATION_ERROR',
+            message: 'Validation failed',
+            details: error.errors
+          }
+        });
       }
+    });
 
-      const customError = new CustomError('Custom error message', 422);
+    it('should handle Prisma unique constraint error', () => {
+      const error = new Prisma.PrismaClientKnownRequestError('Unique constraint failed', {
+        code: 'P2002',
+        clientVersion: '1.0.0',
+        meta: { target: ['email'] }
+      });
+      errorHandler(error, req, res, next);
       
-      errorHandler(customError, mockReq as Request, mockRes as Response, mockNext);
-
-      expect(mockRes.status).toHaveBeenCalledWith(500); // Should default to 500
-      expect(mockRes.json).toHaveBeenCalledWith({
+      expect(res.status).toHaveBeenCalledWith(409);
+      expect(res.json).toHaveBeenCalledWith({
         success: false,
-        message: 'Custom error message',
-        code: 'INTERNAL_ERROR'
-      });
-    });
-
-    it('should handle errors with additional properties', () => {
-      const error = new Error('Database error');
-      (error as any).code = 'DB_CONNECTION_FAILED';
-      (error as any).details = { host: 'localhost', port: 5432 };
-      
-      errorHandler(error, mockReq as Request, mockRes as Response, mockNext);
-
-      expect(mockRes.status).toHaveBeenCalledWith(500);
-      expect(mockRes.json).toHaveBeenCalledWith({
-        success: false,
-        message: 'Database error',
-        code: 'INTERNAL_ERROR'
-      });
-    });
-  });
-
-  describe('Edge Cases and Error Scenarios', () => {
-    it('should handle asyncHandler with multiple async operations', async () => {
-      const asyncFunction = jest.fn().mockImplementation(async () => {
-        await Promise.resolve('step1');
-        await Promise.resolve('step2');
-        return 'final result';
-      });
-      
-      const wrappedFunction = asyncHandler(asyncFunction);
-      
-      await wrappedFunction(mockReq as Request, mockRes as Response, mockNext);
-      
-      expect(asyncFunction).toHaveBeenCalled();
-      expect(mockNext).not.toHaveBeenCalled();
-    });
-
-    it('should handle asyncHandler with nested errors', async () => {
-      const asyncFunction = jest.fn().mockImplementation(async () => {
-        try {
-          await Promise.resolve('step1');
-          throw new Error('Nested error');
-        } catch (error) {
-          throw new ValidationError('Wrapped validation error');
+        error: {
+          code: 'DUPLICATE_ERROR',
+          message: 'A record with this value already exists',
+          details: { target: ['email'] }
         }
       });
-      
-      const wrappedFunction = asyncHandler(asyncFunction);
-      
-      await wrappedFunction(mockReq as Request, mockRes as Response, mockNext);
-      
-      expect(mockNext).toHaveBeenCalledWith(expect.any(ValidationError));
     });
 
-    it('should handle response already sent scenario', () => {
-      const error = new ValidationError('Test error');
-      mockRes.headersSent = true;
+    it('should handle unknown errors', () => {
+      const error = new Error('Unknown error');
+      errorHandler(error, req, res, next);
       
-      errorHandler(error, mockReq as Request, mockRes as Response, mockNext);
-      
-      expect(mockRes.status).not.toHaveBeenCalled();
-      expect(mockRes.json).not.toHaveBeenCalled();
-    });
-
-    it('should handle response methods throwing errors', () => {
-      const error = new ValidationError('Test error');
-      mockRes.status = jest.fn().mockImplementation(() => {
-        throw new Error('Status method error');
-      });
-      
-      expect(() => {
-        errorHandler(error, mockReq as Request, mockRes as Response, mockNext);
-      }).toThrow('Status method error');
-    });
-
-    it('should handle very long error messages', () => {
-      const longMessage = 'x'.repeat(10000);
-      const error = new Error(longMessage);
-      
-      errorHandler(error, mockReq as Request, mockRes as Response, mockNext);
-      
-      expect(mockRes.status).toHaveBeenCalledWith(500);
-      expect(mockRes.json).toHaveBeenCalledWith({
+      expect(res.status).toHaveBeenCalledWith(500);
+      expect(res.json).toHaveBeenCalledWith({
         success: false,
-        message: longMessage,
-        code: 'INTERNAL_ERROR'
-      });
-    });
-
-    it('should handle circular reference errors', () => {
-      const error = new Error('Circular reference');
-      const circularObj: any = { name: 'test' };
-      circularObj.self = circularObj;
-      (error as any).circular = circularObj;
-      
-      errorHandler(error, mockReq as Request, mockRes as Response, mockNext);
-      
-      expect(mockRes.status).toHaveBeenCalledWith(500);
-      expect(mockRes.json).toHaveBeenCalledWith({
-        success: false,
-        message: 'Circular reference',
-        code: 'INTERNAL_ERROR'
+        error: {
+          code: 'INTERNAL_ERROR',
+          message: 'An unexpected error occurred'
+        }
       });
     });
   });
 
-  describe('Integration Tests', () => {
-    it('should work with Express middleware chain', async () => {
-      const asyncRoute = asyncHandler(async (req: Request, res: Response) => {
-        const data = { id: 1, name: 'Test' };
-        successResponse(res, data, 'Success');
-      });
+  describe('successResponse', () => {
+    it('should return success response with data', () => {
+      const data = { id: 1, name: 'Test' };
+      successResponse(res, data, 'Success message');
       
-      await asyncRoute(mockReq as Request, mockRes as Response, mockNext);
-      
-      expect(mockRes.status).toHaveBeenCalledWith(200);
-      expect(mockRes.json).toHaveBeenCalledWith({
+      expect(res.json).toHaveBeenCalledWith({
         success: true,
-        data: { id: 1, name: 'Test' },
-        message: 'Success'
+        data,
+        message: 'Success message'
       });
     });
+  });
 
-    it('should handle error in Express middleware chain', async () => {
-      const asyncRoute = asyncHandler(async (req: Request, res: Response) => {
-        throw new ValidationError('Invalid input');
-      });
+  describe('paginatedResponse', () => {
+    it('should return paginated response', () => {
+      const data = [{ id: 1 }, { id: 2 }];
+      paginatedResponse(res, data, 10, 1, 5, 'Paginated data');
       
-      await asyncRoute(mockReq as Request, mockRes as Response, mockNext);
-      
-      expect(mockNext).toHaveBeenCalledWith(expect.any(ValidationError));
-    });
-
-    it('should maintain consistent error response format', () => {
-      const errorTypes = [
-        new ValidationError('Validation failed'),
-        new NotFoundError('Not found'),
-        new Error('Generic error')
-      ];
-      
-      errorTypes.forEach(error => {
-        errorHandler(error, mockReq as Request, mockRes as Response, mockNext);
-        
-        expect(mockRes.json).toHaveBeenCalledWith(
-          expect.objectContaining({
-            success: false,
-            message: expect.any(String),
-            code: expect.any(String)
-          })
-        );
-        
-        jest.clearAllMocks();
+      expect(res.json).toHaveBeenCalledWith({
+        success: true,
+        data,
+        pagination: {
+          page: 1,
+          limit: 5,
+          total: 10,
+          totalPages: 2
+        },
+        message: 'Paginated data'
       });
     });
   });

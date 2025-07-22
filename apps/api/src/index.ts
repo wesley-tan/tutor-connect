@@ -90,7 +90,7 @@ app.use(requestLogger);
 // Rate limiting configuration
 const globalLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
-  max: process.env.RATE_LIMIT_MAX_REQUESTS ? parseInt(process.env.RATE_LIMIT_MAX_REQUESTS) : 1000, // Increased from 100
+  max: 2000, // Increased from 1000
   message: { 
     success: false,
     error: {
@@ -100,12 +100,12 @@ const globalLimiter = rateLimit({
   },
   standardHeaders: true,
   legacyHeaders: false,
-  skip: (req) => req.path === '/api/v1/health' || req.path === '/api/v1/auth/me' // Don't rate limit health checks or auth checks
+  skip: (req) => req.path === '/api/v1/health' || req.path === '/api/v1/auth/me' || req.path.startsWith('/api/v1/reference') // Don't rate limit health checks, auth checks, and reference data
 });
 
 const authLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
-  max: process.env.AUTH_RATE_LIMIT_MAX_REQUESTS ? parseInt(process.env.AUTH_RATE_LIMIT_MAX_REQUESTS) : 50, // Increased from 5
+  max: 200, // Increased from 50
   message: { 
     success: false,
     error: {
@@ -128,9 +128,12 @@ app.use(initializeCsrf);
 // Health check
 app.get('/api/v1/health', (req, res) => {
   res.json({ 
-    status: 'ok', 
-    timestamp: new Date().toISOString(),
-    environment: process.env.NODE_ENV
+    success: true,
+    data: {
+      status: 'ok',
+      timestamp: new Date().toISOString(),
+      environment: process.env.NODE_ENV
+    }
   });
 });
 
@@ -162,9 +165,11 @@ app.use(errorHandler);
 // 404 handler
 app.use((req, res) => {
   res.status(404).json({
-    error: 'Not Found',
+    success: false,
+    error: {
     code: 'NOT_FOUND',
     message: `Cannot ${req.method} ${req.path}`
+    }
   });
 });
 

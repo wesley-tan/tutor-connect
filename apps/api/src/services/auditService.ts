@@ -1,6 +1,7 @@
 import { prisma } from '@tutorconnect/database';
 import { logger } from '../utils/logger';
 import type { AuthenticatedRequest } from '../utils/supabaseAuth';
+import type { Prisma } from '@prisma/client';
 
 export type AuditAction = 
   | 'auth.login'
@@ -45,7 +46,7 @@ export class AuditService {
     req: AuthenticatedRequest,
     action: AuditAction,
     resource: AuditResource,
-    resourceId?: string,
+    resourceId?: string | null,
     oldValues?: any,
     newValues?: any,
     metadata?: AuditMetadata
@@ -58,9 +59,9 @@ export class AuditService {
           userId,
           action,
           resource,
-          resourceId,
-          oldValues: oldValues ? JSON.stringify(oldValues) : null,
-          newValues: newValues ? JSON.stringify(newValues) : null,
+          resourceId: resourceId ?? null,
+          oldValues: oldValues ?? null,
+          newValues: newValues ?? null,
           metadata: {
             ip: req.ip,
             userAgent: req.get('user-agent'),
@@ -68,8 +69,8 @@ export class AuditService {
             method: req.method,
             ...metadata
           },
-          ipAddress: req.ip,
-          userAgent: req.get('user-agent')
+          ipAddress: req.ip ?? null,
+          userAgent: req.get('user-agent') ?? null
         }
       });
 
