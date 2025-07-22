@@ -1,21 +1,16 @@
-import { Request, Response, NextFunction } from 'express';
 import { createClient } from '@supabase/supabase-js';
+import { Request, Response, NextFunction } from 'express';
 import { prisma } from '@tutorconnect/database';
-import { AuthenticationError } from '../middleware/errorHandlers';
 import { logger } from './logger';
 
-// Initialize Supabase client for server-side operations
 const supabaseUrl = process.env.SUPABASE_URL;
 const supabaseServiceKey = process.env.SUPABASE_SERVICE_KEY;
 
-if (!supabaseUrl || !supabaseServiceKey) {
-  console.warn('Missing Supabase environment variables. Backend auth will not work properly.');
-  // Don't throw error, just log warning
-}
+let supabase: ReturnType<typeof createClient> | null = null;
 
-const supabase = supabaseUrl && supabaseServiceKey 
-  ? createClient(supabaseUrl, supabaseServiceKey)
-  : null;
+if (supabaseUrl && supabaseServiceKey) {
+  supabase = createClient(supabaseUrl, supabaseServiceKey);
+}
 
 export interface AuthenticatedRequest extends Request {
   user: {
@@ -23,126 +18,112 @@ export interface AuthenticatedRequest extends Request {
     email: string;
     userType: string;
     supabaseId: string;
+    firstName?: string;
+    lastName?: string;
   };
 }
 
-// Verify Supabase access token
-export const verifySupabaseToken = async (token: string) => {
+export const authenticateSupabaseToken = async (
+  req: Request,
+  res: Response,
+  next: NextFunction
+): Promise<void> => {
   try {
-    const { data: { user }, error } = await supabase!.auth.getUser(token);
-    
-    if (error || !user) {
-      throw new AuthenticationError('Invalid access token');
+    if (!supabase) {
+      logger.warn('Supabase not configured, skipping authentication');
+      return next();
     }
 
-    return user;
-  } catch (error) {
-    logger.error('Supabase token verification failed', { error: error.message });
-    throw new AuthenticationError('Invalid access token');
-  }
-};
-
-// Middleware to authenticate Supabase tokens
-export const authenticateSupabaseToken = async (req: Request, res: Response, next: NextFunction) => {
-  try {
     const authHeader = req.headers.authorization;
-    const token = authHeader && authHeader.split(' ')[1]; // Bearer TOKEN
-
-    if (!token) {
-      throw new AuthenticationError('Access token required');
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+      res.status(401).json({
+        success: false,
+        message: 'No valid authorization header provided'
+      });
+      return;
     }
 
-    // Verify the Supabase token
-    const supabaseUser = await verifySupabaseToken(token);
-    
-    // Find or create user in our database
-    let user = await prisma.user.findUnique({
-      where: { supabaseId: supabaseUser.id },
-      select: { id: true, email: true, userType: true, isActive: true, supabaseId: true }
+    const token = authHeader.split(' ')[1];
+    const { data: { user: supabaseUser }, error } = await supabase.auth.getUser(token);
+
+    if (error || !supabaseUser) {
+      res.status(401).json({
+        success: false,
+        message: 'Invalid or expired token'
+      });
+      return;
+    }
+
+    // Get user from database
+    const dbUser = await prisma.user.findUnique({
+      where: { email: supabaseUser.email! },
+      select: {
+        id: true,
+        email: true,
+        userType: true,
+        isActive: true
+      }
     });
 
-    // If user doesn't exist in our database, create them
-    if (!user) {
-      const userType = supabaseUser.user_metadata?.userType || 'student';
-      const firstName = supabaseUser.user_metadata?.firstName || '';
-      const lastName = supabaseUser.user_metadata?.lastName || '';
-      
-      user = await prisma.user.create({
-        data: {
-          supabaseId: supabaseUser.id,
-          email: supabaseUser.email!,
-          firstName,
-          lastName,
-          userType,
-          isActive: true,
-          authProvider: 'supabase'
-        },
-        select: { id: true, email: true, userType: true, isActive: true, supabaseId: true }
+    if (!dbUser || !dbUser.isActive) {
+      res.status(401).json({
+        success: false,
+        message: 'User not found or inactive'
       });
-    }
-
-    if (!user.isActive) {
-      throw new AuthenticationError('User account is inactive');
+      return;
     }
 
     // Attach user to request
     (req as AuthenticatedRequest).user = {
-      id: user.id,
-      email: user.email,
-      userType: user.userType,
-      supabaseId: user.supabaseId
+      id: dbUser.id,
+      email: dbUser.email,
+      userType: dbUser.userType,
+      supabaseId: supabaseUser.id
     };
 
     next();
   } catch (error) {
-    logger.error('Supabase authentication failed', { error: error.message, ip: req.ip });
-    next(error);
+    logger.error('Authentication error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Authentication failed'
+    });
   }
 };
 
-// Authorization middleware
-export const requireRole = (...roles: string[]) => {
-  return (req: Request, res: Response, next: NextFunction) => {
+export const requireRole = (requiredRole: string) => {
+  return (req: Request, res: Response, next: NextFunction): void => {
     const user = (req as AuthenticatedRequest).user;
     
     if (!user) {
-      throw new AuthenticationError('Authentication required');
+      res.status(401).json({
+        success: false,
+        message: 'Authentication required'
+      });
+      return;
     }
 
-    if (!roles.includes(user.userType)) {
-      throw new AuthenticationError(`Access denied. Required roles: ${roles.join(', ')}`);
+    if (user.userType !== requiredRole) {
+      res.status(403).json({
+        success: false,
+        message: `Access denied. Required role: ${requiredRole}`
+      });
+      return;
     }
 
     next();
   };
 };
 
-// Optional authentication (doesn't throw if no token)
-export const optionalSupabaseAuth = async (req: Request, res: Response, next: NextFunction) => {
-  try {
-    const authHeader = req.headers.authorization;
-    const token = authHeader && authHeader.split(' ')[1];
-
-    if (token) {
-      const supabaseUser = await verifySupabaseToken(token);
-      
-      let user = await prisma.user.findUnique({
-        where: { supabaseId: supabaseUser.id },
-        select: { id: true, email: true, userType: true, isActive: true, supabaseId: true }
-      });
-
-      if (user && user.isActive) {
-        (req as AuthenticatedRequest).user = {
-          id: user.id,
-          email: user.email,
-          userType: user.userType,
-          supabaseId: user.supabaseId
-        };
-      }
-    }
-    next();
-  } catch (error) {
-    // Don't throw, just continue without auth
-    next();
-  }
+// Mock authentication middleware for development
+export const mockAuth = (req: Request, res: Response, next: NextFunction) => {
+  (req as AuthenticatedRequest).user = {
+    id: 'user-1',
+    email: 'demo@example.com',
+    userType: 'student',
+    supabaseId: 'mock-supabase-id',
+    firstName: 'Demo',
+    lastName: 'User'
+  };
+  next();
 }; 

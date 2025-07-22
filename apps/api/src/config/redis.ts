@@ -9,41 +9,39 @@ let redis: Redis | null = null;
 if (REDIS_URL && REDIS_URL.trim() !== '') {
   try {
     redis = new Redis(REDIS_URL, {
-  retryDelayOnFailover: 100,
       maxRetriesPerRequest: 1,
-  enableReadyCheck: true,
-  lazyConnect: true,
-  // Connection timeout
-  connectTimeout: 5000,
-  commandTimeout: 3000,
-  retryDelayOnClusterDown: 300,
-  enableOfflineQueue: false,
-});
+      enableReadyCheck: true,
+      lazyConnect: true,
+      connectTimeout: 5000,
+      commandTimeout: 3000,
+      retryStrategy: (times) => Math.min(times * 100, 3000),
+      enableOfflineQueue: false,
+    });
 
     // Event handlers - only add if redis client exists
-redis.on('connect', () => {
-  logger.info('📦 Redis: Connected');
-});
+    redis.on('connect', () => {
+      logger.info('📦 Redis: Connected');
+    });
 
-redis.on('ready', () => {
-  logger.info('📦 Redis: Ready');
-});
+    redis.on('ready', () => {
+      logger.info('📦 Redis: Ready');
+    });
 
-redis.on('error', (error) => {
-  logger.error('📦 Redis: Error -', error);
-});
+    redis.on('error', (error) => {
+      logger.error('📦 Redis: Error -', error);
+    });
 
-redis.on('close', () => {
-  logger.warn('📦 Redis: Connection closed');
-});
+    redis.on('close', () => {
+      logger.warn('📦 Redis: Connection closed');
+    });
 
-redis.on('reconnecting', (delay) => {
-  logger.info(`📦 Redis: Reconnecting in ${delay}ms`);
-});
+    redis.on('reconnecting', (delay: number) => {
+      logger.info(`📦 Redis: Reconnecting in ${delay}ms`);
+    });
 
-redis.on('end', () => {
-  logger.warn('📦 Redis: Connection ended');
-});
+    redis.on('end', () => {
+      logger.warn('📦 Redis: Connection ended');
+    });
   } catch (error) {
     logger.warn('Redis connection failed, running without Redis');
     redis = null;

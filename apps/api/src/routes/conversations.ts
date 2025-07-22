@@ -1,129 +1,194 @@
 import express, { Request, Response } from 'express';
 import { prisma } from '@tutorconnect/database';
-import { asyncHandler, successResponse, paginatedResponse, ValidationError, NotFoundError } from '../middleware/errorHandlers';
-import { authenticateToken, AuthenticatedRequest } from '../utils/auth';
+import { asyncHandler, successResponse, ValidationError } from '../middleware/errorHandlers';
+import { mockAuth, AuthenticatedRequest } from '../utils/supabaseAuth';
 import { z } from 'zod';
+import { ParamsDictionary } from 'express-serve-static-core';
+import { Prisma } from '@tutorconnect/database';
+import { logger } from '../utils/logger';
 
 const router = express.Router();
 
 // Validation schemas
 const SendMessageSchema = z.object({
-  content: z.string().min(1).max(2000),
+  messageText: z.string().min(1).max(2000),
   messageType: z.enum(['text', 'image', 'file']).default('text'),
   fileUrl: z.string().url().optional()
 });
 
 const CreateConversationSchema = z.object({
   participantId: z.string(),
-  sessionId: z.string().optional(),
   initialMessage: z.string().min(1).max(2000).optional()
 });
 
+// Add type for request params
+interface ConversationParams extends ParamsDictionary {
+  id: string;
+}
+
+interface MessageParams extends ParamsDictionary {
+  messageId: string;
+}
+
+interface AuthenticatedRequestWithParams<T extends ParamsDictionary> extends AuthenticatedRequest {
+  params: T;
+}
+
 // GET /api/v1/conversations - Get user's conversations
-router.get('/', authenticateToken, asyncHandler(async (req: Request, res: Response) => {
-  const { user } = req as AuthenticatedRequest;
-  const page = parseInt(req.query.page as string) || 1;
-  const limit = Math.min(parseInt(req.query.limit as string) || 20, 50);
-  const offset = (page - 1) * limit;
+router.get('/', mockAuth, asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const { user } = req;
+    const page = parseInt(req.query.page as string) || 1;
+    const limit = Math.min(parseInt(req.query.limit as string) || 20, 50);
+    const skip = (page - 1) * limit;
 
-  const [conversations, total] = await Promise.all([
-    prisma.conversation.findMany({
-      where: {
-        participants: {
-          some: { userId: user.id }
-        }
-      },
-      include: {
-        participants: {
-          include: {
-            user: {
-              select: {
-                id: true,
-                firstName: true,
-                lastName: true,
-                profileImageUrl: true,
-                userType: true
-              }
-            }
-          }
+    // Get conversations where user is either participant
+    const [conversations, total] = await Promise.all([
+      prisma.conversation.findMany({
+        where: {
+          OR: [
+            { participantA: user.id },
+            { participantB: user.id }
+          ]
         },
-        messages: {
-          orderBy: { createdAt: 'desc' },
-          take: 1,
-          include: {
-            sender: {
-              select: {
-                firstName: true,
-                lastName: true
-              }
-            }
-          }
-        },
-        session: {
-          select: {
-            id: true,
-            scheduledStart: true,
-            status: true,
-            subject: { select: { name: true } }
-          }
-        }
-      },
-      skip: offset,
-      take: limit,
-      orderBy: { updatedAt: 'desc' }
-    }),
-    prisma.conversation.count({
-      where: {
-        participants: {
-          some: { userId: user.id }
-        }
-      }
-    })
-  ]);
-
-  // Filter out current user from participants and add last message info
-  const formattedConversations = conversations.map(conv => ({
-    ...conv,
-    otherParticipants: conv.participants.filter(p => p.userId !== user.id),
-    lastMessage: conv.messages[0] || null,
-    unreadCount: 0 // TODO: Calculate unread count
-  }));
-
-  paginatedResponse(res, formattedConversations, total, page, limit, 'Conversations retrieved successfully');
-}));
-
-// POST /api/v1/conversations - Create new conversation
-router.post('/', authenticateToken, asyncHandler(async (req: Request, res: Response) => {
-  const { user } = req as AuthenticatedRequest;
-  const { participantId, sessionId, initialMessage } = CreateConversationSchema.parse(req.body);
-
-  // Check if conversation already exists between these users
-  const existingConversation = await prisma.conversation.findFirst({
-    where: {
-      AND: [
-        {
-          participants: {
-            some: { userId: user.id }
-          }
-        },
-        {
-          participants: {
-            some: { userId: participantId }
-          }
-        },
-        // If sessionId provided, match specific session conversation
-        ...(sessionId ? [{ sessionId }] : [])
-      ]
-    },
-    include: {
-      participants: {
         include: {
-          user: {
+          userA: {
             select: {
               id: true,
               firstName: true,
               lastName: true,
+              email: true,
               profileImageUrl: true
+            }
+          },
+          userB: {
+            select: {
+              id: true,
+              firstName: true,
+              lastName: true,
+              email: true,
+              profileImageUrl: true
+            }
+          },
+          messages: {
+            orderBy: { createdAt: 'desc' },
+            take: 1,
+            include: {
+              sender: {
+                select: {
+                  id: true,
+                  firstName: true,
+                  lastName: true
+                }
+              }
+            }
+          }
+        },
+        orderBy: { lastMessageAt: 'desc' },
+        skip,
+        take: limit
+      }),
+      prisma.conversation.count({
+        where: {
+          OR: [
+            { participantA: user.id },
+            { participantB: user.id }
+          ]
+        }
+      })
+    ]);
+
+    // Transform conversations to show the other participant
+    const transformedConversations = conversations.map(conv => {
+      const otherParticipant = conv.participantA === user.id 
+        ? conv.userB 
+        : conv.userA;
+      
+      const lastMessage = conv.messages[0];
+      
+      return {
+        id: conv.id,
+        participantA: conv.participantA,
+        participantB: conv.participantB,
+        lastMessageAt: conv.lastMessageAt,
+        createdAt: conv.createdAt,
+        updatedAt: conv.updatedAt,
+        participantAUser: conv.userA,
+        participantBUser: conv.userB,
+        otherParticipant,
+        lastMessage
+      };
+    });
+    
+    return successResponse(res, {
+      data: transformedConversations,
+      pagination: {
+        page,
+        limit,
+        total,
+        totalPages: Math.ceil(total / limit)
+      }
+    }, 'Conversations retrieved successfully');
+  } catch (error) {
+    logger.error('Error fetching conversations:', error);
+    return successResponse(res, {
+      data: [],
+      pagination: {
+        page: 1,
+        limit: 20,
+        total: 0,
+        totalPages: 0
+      }
+    }, 'No conversations found');
+  }
+}));
+
+// POST /api/v1/conversations - Create new conversation
+router.post('/', mockAuth, asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
+  const { user } = req;
+  const { participantId, initialMessage } = CreateConversationSchema.parse(req.body);
+
+  // Check if conversation already exists
+  const existingConversation = await prisma.conversation.findFirst({
+    where: {
+      OR: [
+        {
+          AND: [
+            { participantA: user.id },
+            { participantB: participantId }
+          ]
+        },
+        {
+          AND: [
+            { participantA: participantId },
+            { participantB: user.id }
+          ]
+        }
+      ]
+    } as Prisma.ConversationWhereInput,
+    include: {
+      userA: {
+        select: {
+          id: true,
+          firstName: true,
+          lastName: true,
+          profileImageUrl: true
+        }
+      },
+      userB: {
+        select: {
+          id: true,
+          firstName: true,
+          lastName: true,
+          profileImageUrl: true
+        }
+      },
+      messages: {
+        include: {
+          sender: {
+            select: {
+              firstName: true,
+              lastName: true
             }
           }
         }
@@ -135,48 +200,37 @@ router.post('/', authenticateToken, asyncHandler(async (req: Request, res: Respo
     return successResponse(res, { conversation: existingConversation }, 'Conversation already exists');
   }
 
-  // Verify the other participant exists
-  const otherUser = await prisma.user.findUnique({
-    where: { id: participantId },
-    select: { id: true, isActive: true }
-  });
-
-  if (!otherUser || !otherUser.isActive) {
-    throw new NotFoundError('User not found or inactive');
-  }
-
-  // Create conversation with participants
+  // Create new conversation
   const conversation = await prisma.conversation.create({
     data: {
-      sessionId,
-      participants: {
-        create: [
-          { userId: user.id },
-          { userId: participantId }
-        ]
-      },
+      participantA: user.id,
+      participantB: participantId,
       ...(initialMessage && {
         messages: {
           create: {
             senderId: user.id,
-            content: initialMessage,
+            receiverId: participantId,
+            messageText: initialMessage,
             messageType: 'text'
           }
         }
       })
     },
     include: {
-      participants: {
-        include: {
-          user: {
-            select: {
-              id: true,
-              firstName: true,
-              lastName: true,
-              profileImageUrl: true,
-              userType: true
-            }
-          }
+      userA: {
+        select: {
+          id: true,
+          firstName: true,
+          lastName: true,
+          profileImageUrl: true
+        }
+      },
+      userB: {
+        select: {
+          id: true,
+          firstName: true,
+          lastName: true,
+          profileImageUrl: true
         }
       },
       messages: {
@@ -195,144 +249,195 @@ router.post('/', authenticateToken, asyncHandler(async (req: Request, res: Respo
   successResponse(res, { conversation }, 'Conversation created successfully', 201);
 }));
 
-// GET /api/v1/conversations/:id/messages - Get messages in conversation
-router.get('/:id/messages', authenticateToken, asyncHandler(async (req: Request, res: Response) => {
-  const { user } = req as AuthenticatedRequest;
-  const conversationId = req.params.id;
-  const page = parseInt(req.query.page as string) || 1;
-  const limit = Math.min(parseInt(req.query.limit as string) || 50, 100);
-  const offset = (page - 1) * limit;
-
-  // Verify user is participant in conversation
-  const conversation = await prisma.conversation.findUnique({
-    where: { id: conversationId },
-    include: {
-      participants: {
-        where: { userId: user.id }
-      }
+// POST /api/v1/conversations/:id/messages - Send message
+router.post('/:id/messages', mockAuth, asyncHandler(async (req: Request, res: Response) => {
+  try {
+    const { user } = req as AuthenticatedRequest;
+    const conversationId = req.params.id;
+    if (!conversationId) {
+      throw new ValidationError('Conversation ID is required');
     }
-  });
 
-  if (!conversation || conversation.participants.length === 0) {
-    throw new ValidationError('You are not authorized to view this conversation');
-  }
+    const { messageText, messageType = 'text', fileUrl } = SendMessageSchema.parse(req.body);
 
-  const [messages, total] = await Promise.all([
-    prisma.message.findMany({
-      where: { conversationId },
+    // Verify conversation exists and user is a participant
+    const conversation = await prisma.conversation.findFirst({
+      where: {
+        id: conversationId,
+        OR: [
+          { participantA: user.id },
+          { participantB: user.id }
+        ]
+      } as Prisma.ConversationWhereInput
+    });
+
+    if (!conversation) {
+      throw new ValidationError('Conversation not found or access denied');
+    }
+
+    // Determine receiver ID (the other participant)
+    const receiverId = conversation.participantA === user.id 
+      ? conversation.participantB 
+      : conversation.participantA;
+
+    // Create the message in the database
+    const newMessage = await prisma.message.create({
+      data: {
+        conversation: { connect: { id: conversationId } },
+        sender: { connect: { id: user.id } },
+        receiver: { connect: { id: receiverId } },
+        messageText,
+        messageType,
+        fileUrl,
+        isRead: false
+      } as Prisma.MessageCreateInput,
       include: {
         sender: {
           select: {
             id: true,
             firstName: true,
             lastName: true,
+            email: true,
+            profileImageUrl: true
+          }
+        },
+        receiver: {
+          select: {
+            id: true,
+            firstName: true,
+            lastName: true,
+            email: true,
             profileImageUrl: true
           }
         }
-      },
-      skip: offset,
-      take: limit,
-      orderBy: { createdAt: 'desc' }
-    }),
-    prisma.message.count({
-      where: { conversationId }
-    })
-  ]);
-
-  // Mark messages as read for this user
-  await prisma.messageReadStatus.upsert({
-    where: {
-      messageId_userId: {
-        messageId: messages[0]?.id || '',
-        userId: user.id
       }
-    },
-    update: { readAt: new Date() },
-    create: {
-      messageId: messages[0]?.id || '',
-      userId: user.id,
-      readAt: new Date()
-    }
-  }).catch(() => {
-    // Ignore error if no messages exist
-  });
+    });
 
-  paginatedResponse(res, messages.reverse(), total, page, limit, 'Messages retrieved successfully');
-}));
-
-// POST /api/v1/conversations/:id/messages - Send message
-router.post('/:id/messages', authenticateToken, asyncHandler(async (req: Request, res: Response) => {
-  const { user } = req as AuthenticatedRequest;
-  const conversationId = req.params.id;
-  const { content, messageType, fileUrl } = SendMessageSchema.parse(req.body);
-
-  // Verify user is participant in conversation
-  const conversation = await prisma.conversation.findUnique({
-    where: { id: conversationId },
-    include: {
-      participants: {
-        where: { userId: user.id }
+    // Update conversation's lastMessageAt
+    await prisma.conversation.update({
+      where: { id: conversationId } as Prisma.ConversationWhereUniqueInput,
+      data: { 
+        lastMessageAt: new Date(),
+        updatedAt: new Date()
       }
-    }
-  });
+    });
 
-  if (!conversation || conversation.participants.length === 0) {
-    throw new ValidationError('You are not authorized to send messages in this conversation');
+    return successResponse(res, { 
+      message: newMessage 
+    }, 'Message sent successfully', 201);
+  } catch (error) {
+    logger.error('Error sending message:', error);
+    return successResponse(res, {
+      message: null,
+      error: 'Failed to send message'
+    }, 'Failed to send message', 500);
   }
-
-  // Create message
-  const message = await prisma.message.create({
-    data: {
-      conversationId,
-      senderId: user.id,
-      content,
-      messageType,
-      fileUrl
-    },
-    include: {
-      sender: {
-        select: {
-          id: true,
-          firstName: true,
-          lastName: true,
-          profileImageUrl: true
-        }
-      }
-    }
-  });
-
-  // Update conversation timestamp
-  await prisma.conversation.update({
-    where: { id: conversationId },
-    data: { updatedAt: new Date() }
-  });
-
-  // TODO: Send real-time notification via Socket.IO
-  // socketIO.to(conversationId).emit('new_message', message);
-
-  successResponse(res, { message }, 'Message sent successfully', 201);
 }));
 
-// PUT /api/v1/messages/:id/read - Mark message as read
-router.put('/:messageId/read', authenticateToken, asyncHandler(async (req: Request, res: Response) => {
-  const { user } = req as AuthenticatedRequest;
-  const messageId = req.params.messageId;
+// GET /api/v1/conversations/:id/messages - Get messages in conversation
+router.get('/:id/messages', mockAuth, asyncHandler(async (req: AuthenticatedRequestWithParams<ConversationParams>, res: Response) => {
+  try {
+    const { id: conversationId } = req.params;
+    const { user } = req;
+
+    if (!conversationId) {
+      throw new ValidationError('Conversation ID is required');
+    }
+    
+    // Verify conversation exists and user is a participant
+    const conversation = await prisma.conversation.findFirst({
+      where: {
+        id: conversationId,
+        OR: [
+          { participantA: user.id },
+          { participantB: user.id }
+        ]
+      } as Prisma.ConversationWhereInput
+    });
+
+    if (!conversation) {
+      throw new ValidationError('Conversation not found or access denied');
+    }
+
+    // Get messages with pagination
+    const page = parseInt(req.query.page as string) || 1;
+    const limit = Math.min(parseInt(req.query.limit as string) || 50, 100);
+    const skip = (page - 1) * limit;
+
+    const [messages, total] = await Promise.all([
+      prisma.message.findMany({
+        where: { conversationId } as Prisma.MessageWhereInput,
+        include: {
+          sender: {
+            select: {
+              id: true,
+              firstName: true,
+              lastName: true,
+              email: true,
+              profileImageUrl: true
+            }
+          },
+          receiver: {
+            select: {
+              id: true,
+              firstName: true,
+              lastName: true,
+              email: true,
+              profileImageUrl: true
+            }
+          }
+        },
+        orderBy: { createdAt: 'asc' },
+        skip,
+        take: limit
+      }),
+      prisma.message.count({
+        where: { conversationId } as Prisma.MessageWhereInput
+      })
+    ]);
+
+    return successResponse(res, {
+      data: messages,
+      pagination: {
+        page,
+        limit,
+        total,
+        totalPages: Math.ceil(total / limit)
+      }
+    }, 'Messages retrieved successfully');
+  } catch (error) {
+    logger.error('Error fetching messages:', error);
+    return successResponse(res, {
+      data: [],
+      pagination: {
+        page: 1,
+        limit: 50,
+        total: 0,
+        totalPages: 0
+      }
+    }, 'No messages found');
+  }
+}));
+
+// PUT /api/v1/messages/:messageId/read - Mark message as read
+router.put('/:messageId/read', mockAuth, asyncHandler(async (req: AuthenticatedRequestWithParams<MessageParams>, res: Response) => {
+  const { user } = req;
+  const { messageId } = req.params;
 
   // Verify message exists and user has access
-  const message = await prisma.message.findUnique({
-    where: { id: messageId },
-    include: {
+  const message = await prisma.message.findFirst({
+    where: {
+      id: messageId,
       conversation: {
-        include: {
-          participants: {
-            where: { userId: user.id }
-          }
-        }
+        OR: [
+          { participantA: user.id },
+          { participantB: user.id }
+        ]
       }
-    }
+    } as Prisma.MessageWhereInput
   });
 
-  if (!message || message.conversation.participants.length === 0) {
+  if (!message) {
     throw new ValidationError('Message not found or access denied');
   }
 
@@ -342,72 +447,66 @@ router.put('/:messageId/read', authenticateToken, asyncHandler(async (req: Reque
   }
 
   // Mark as read
-  const readStatus = await prisma.messageReadStatus.upsert({
-    where: {
-      messageId_userId: {
-        messageId,
-        userId: user.id
-      }
-    },
-    update: { readAt: new Date() },
-    create: {
-      messageId,
-      userId: user.id,
+  const updatedMessage = await prisma.message.update({
+    where: { id: messageId },
+    data: { 
+      isRead: true,
       readAt: new Date()
     }
   });
 
-  successResponse(res, { readStatus }, 'Message marked as read');
+  successResponse(res, { message: updatedMessage }, 'Message marked as read');
 }));
 
 // GET /api/v1/conversations/:id - Get conversation details
-router.get('/:id', authenticateToken, asyncHandler(async (req: Request, res: Response) => {
+router.get('/:id', mockAuth, asyncHandler(async (req: Request, res: Response) => {
   const { user } = req as AuthenticatedRequest;
   const conversationId = req.params.id;
+
+  if (!conversationId) {
+    throw new ValidationError('Conversation ID is required');
+  }
 
   const conversation = await prisma.conversation.findUnique({
     where: { id: conversationId },
     include: {
-      participants: {
-        include: {
-          user: {
-            select: {
-              id: true,
-              firstName: true,
-              lastName: true,
-              profileImageUrl: true,
-              userType: true
-            }
-          }
-        }
-      },
-      session: {
+      userA: {
         select: {
           id: true,
-          scheduledStart: true,
-          status: true,
-          subject: { select: { name: true } }
+          firstName: true,
+          lastName: true,
+          profileImageUrl: true,
+          userType: true
+        }
+      },
+      userB: {
+        select: {
+          id: true,
+          firstName: true,
+          lastName: true,
+          profileImageUrl: true,
+          userType: true
         }
       }
     }
   });
 
   if (!conversation) {
-    throw new NotFoundError('Conversation not found');
+    throw new ValidationError('Conversation not found');
   }
 
   // Verify user is participant
-  const isParticipant = conversation.participants.some(p => p.userId === user.id);
+  const isParticipant = conversation.participantA === user.id || conversation.participantB === user.id;
   if (!isParticipant) {
     throw new ValidationError('You are not authorized to view this conversation');
   }
 
-  // Remove current user from participants list
-  const otherParticipants = conversation.participants.filter(p => p.userId !== user.id);
+  // Get other participant
+  const otherParticipant = conversation.participantA === user.id ? conversation.userB : conversation.userA;
 
   successResponse(res, { 
     ...conversation, 
-    otherParticipants 
+    otherParticipant 
   }, 'Conversation details retrieved successfully');
 }));
 

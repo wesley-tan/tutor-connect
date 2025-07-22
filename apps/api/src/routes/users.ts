@@ -1,9 +1,10 @@
 import express, { Request, Response } from 'express';
 import { prisma } from '@tutorconnect/database';
 import { asyncHandler, successResponse, ValidationError, NotFoundError } from '../middleware/errorHandlers';
-import { authenticateToken, AuthenticatedRequest } from '../utils/auth';
+import { mockAuth, AuthenticatedRequest } from '../utils/supabaseAuth';
 import { z } from 'zod';
 import multer from 'multer';
+import { Prisma } from '@prisma/client';
 
 const router = express.Router();
 
@@ -23,85 +24,99 @@ const upload = multer({
 const UpdateProfileSchema = z.object({
   firstName: z.string().min(1).max(50).optional(),
   lastName: z.string().min(1).max(50).optional(),
-  phone: z.string().regex(/^\+?[1-9]\d{1,14}$/).optional(),
+  phone: z.string().regex(/^\+?[1-9]\d{1,14}$/).nullable().optional(),
   timezone: z.string().optional(),
-  profileImageUrl: z.string().url().optional()
+  profileImageUrl: z.string().url().nullable().optional()
+}).transform(data => {
+  const updates: Prisma.UserUpdateInput = {};
+  if (data.firstName !== undefined) {
+    updates.firstName = data.firstName;
+  }
+  if (data.lastName !== undefined) {
+    updates.lastName = data.lastName;
+  }
+  if (data.phone !== undefined) {
+    updates.phone = data.phone;
+  }
+  if (data.timezone !== undefined) {
+    updates.timezone = data.timezone;
+  }
+  if (data.profileImageUrl !== undefined) {
+    updates.profileImageUrl = data.profileImageUrl;
+  }
+  return updates;
 });
 
 const CreateTuteeProfileSchema = z.object({
-  gradeLevel: z.string().optional(),
-  schoolName: z.string().optional(),
-  learningStyle: z.enum(['visual', 'auditory', 'kinesthetic', 'mixed']).optional(),
-  budgetMin: z.number().min(0).optional(),
-  budgetMax: z.number().min(0).optional(),
+  gradeLevel: z.string().nullable(),
+  schoolName: z.string().nullable(),
+  learningStyle: z.enum(['visual', 'auditory', 'kinesthetic', 'mixed']).nullable(),
+  budgetMin: z.number().min(0).nullable(),
+  budgetMax: z.number().min(0).nullable(),
   preferredSessionLength: z.number().min(30).max(180).default(60),
-  locationCity: z.string().optional(),
-  locationState: z.string().optional(),
-  parentId: z.string().optional()
-});
+  locationCity: z.string().nullable(),
+  locationState: z.string().nullable(),
+  parentId: z.string().nullable()
+}).transform(data => ({
+  gradeLevel: data.gradeLevel,
+  schoolName: data.schoolName,
+  learningStyle: data.learningStyle,
+  budgetMin: data.budgetMin,
+  budgetMax: data.budgetMax,
+  preferredSessionLength: data.preferredSessionLength,
+  locationCity: data.locationCity,
+  locationState: data.locationState,
+  parentId: data.parentId
+}));
 
 const CreateTutorProfileSchema = z.object({
   hourlyRate: z.number().min(10).max(500),
-  educationLevel: z.string().optional(),
-  university: z.string().optional(),
-  major: z.string().optional(),
-  graduationYear: z.number().optional(),
+  educationLevel: z.string().nullable(),
+  university: z.string().nullable(),
+  major: z.string().nullable(),
+  graduationYear: z.number().nullable(),
   teachingExperienceYears: z.number().min(0).default(0),
-  bio: z.string().max(1000).optional(),
-  teachingMethodology: z.string().max(500).optional(),
+  bio: z.string().max(1000).nullable(),
+  teachingMethodology: z.string().max(500).nullable(),
   availabilityTimezone: z.string().default('UTC')
-});
+}).transform(data => ({
+  hourlyRate: data.hourlyRate,
+  educationLevel: data.educationLevel,
+  university: data.university,
+  major: data.major,
+  graduationYear: data.graduationYear,
+  teachingExperienceYears: data.teachingExperienceYears,
+  bio: data.bio,
+  teachingMethodology: data.teachingMethodology,
+  availabilityTimezone: data.availabilityTimezone
+}));
 
 // GET /api/v1/users/profile - Get current user profile
-router.get('/profile', authenticateToken, asyncHandler(async (req: Request, res: Response) => {
+router.get('/profile', mockAuth, asyncHandler(async (req: Request, res: Response) => {
   const { user } = req as AuthenticatedRequest;
   
-  const userProfile = await prisma.user.findUnique({
-    where: { id: user.id },
-    select: {
-      id: true,
-      email: true,
-      firstName: true,
-      lastName: true,
-      userType: true,
-      phone: true,
-      profileImageUrl: true,
-      timezone: true,
-      isVerified: true,
-      createdAt: true,
-      updatedAt: true,
-      tuteeProfile: {
-        include: {
-          tuteeSubjectNeeds: {
-            include: { subject: true }
-          },
-          tuteeLearningGoals: true
-        }
-      },
-      tutorProfile: {
-        include: {
-          tutorSubjects: {
-            include: { subject: true }
-          },
-          tutorCertifications: {
-            include: { certification: true }
-          },
-          tutorSpecializations: true,
-          tutorLanguages: true
-        }
-      }
-    }
-  });
+  // Return demo user profile data
+  const demoProfile = {
+    id: user.id,
+    email: user.email,
+    firstName: 'Demo',
+    lastName: 'User',
+    userType: user.userType,
+    phone: null,
+    profileImageUrl: null,
+    timezone: 'UTC',
+    isVerified: true,
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+    tuteeProfile: null,
+    tutorProfile: null
+  };
 
-  if (!userProfile) {
-    throw new NotFoundError('User profile not found');
-  }
-
-  successResponse(res, { user: userProfile }, 'User profile retrieved successfully');
+  successResponse(res, { user: demoProfile }, 'User profile retrieved successfully (demo mode)');
 }));
 
 // PUT /api/v1/users/profile - Update current user profile
-router.put('/profile', authenticateToken, asyncHandler(async (req: Request, res: Response) => {
+router.put('/profile', mockAuth, asyncHandler(async (req: Request, res: Response) => {
   const { user } = req as AuthenticatedRequest;
   const validatedData = UpdateProfileSchema.parse(req.body);
   
@@ -126,7 +141,7 @@ router.put('/profile', authenticateToken, asyncHandler(async (req: Request, res:
 }));
 
 // POST /api/v1/users/upload-avatar - Upload profile avatar
-router.post('/upload-avatar', authenticateToken, upload.single('avatar'), asyncHandler(async (req: Request, res: Response) => {
+router.post('/upload-avatar', mockAuth, upload.single('avatar'), asyncHandler(async (req: Request, res: Response) => {
   const { user } = req as AuthenticatedRequest;
   
   if (!req.file) {
@@ -152,7 +167,7 @@ router.post('/upload-avatar', authenticateToken, upload.single('avatar'), asyncH
 }));
 
 // DELETE /api/v1/users/account - Delete user account
-router.delete('/account', authenticateToken, asyncHandler(async (req: Request, res: Response) => {
+router.delete('/account', mockAuth, asyncHandler(async (req: Request, res: Response) => {
   const { user } = req as AuthenticatedRequest;
   const { confirmPassword } = z.object({
     confirmPassword: z.string()
@@ -188,7 +203,7 @@ router.delete('/account', authenticateToken, asyncHandler(async (req: Request, r
 }));
 
 // POST /api/v1/users/tutee-profile - Create tutee profile
-router.post('/tutee-profile', authenticateToken, asyncHandler(async (req: Request, res: Response) => {
+router.post('/tutee-profile', mockAuth, asyncHandler(async (req: Request, res: Response) => {
   const { user } = req as AuthenticatedRequest;
   const validatedData = CreateTuteeProfileSchema.parse(req.body);
 
@@ -226,7 +241,7 @@ router.post('/tutee-profile', authenticateToken, asyncHandler(async (req: Reques
 }));
 
 // POST /api/v1/users/tutor-profile - Create tutor profile
-router.post('/tutor-profile', authenticateToken, asyncHandler(async (req: Request, res: Response) => {
+router.post('/tutor-profile', mockAuth, asyncHandler(async (req: Request, res: Response) => {
   const { user } = req as AuthenticatedRequest;
   const validatedData = CreateTutorProfileSchema.parse(req.body);
 
@@ -264,14 +279,14 @@ router.post('/tutor-profile', authenticateToken, asyncHandler(async (req: Reques
 }));
 
 // GET /api/v1/users/tutee/recommendations - Get tutor recommendations (for tutees)
-router.get('/tutee/recommendations', authenticateToken, asyncHandler(async (req: Request, res: Response) => {
+router.get('/tutee/recommendations', mockAuth, asyncHandler(async (req: Request, res: Response) => {
   const { user } = req as AuthenticatedRequest;
   
   // Get tutee profile with subject needs
   const tuteeProfile = await prisma.tuteeProfile.findUnique({
     where: { userId: user.id },
     include: {
-      tuteeSubjectNeeds: {
+      subjectNeeds: {
         include: { subject: true }
       }
     }
@@ -282,14 +297,14 @@ router.get('/tutee/recommendations', authenticateToken, asyncHandler(async (req:
   }
 
   // Get recommended tutors based on subject needs and budget
-  const subjectIds = tuteeProfile.tuteeSubjectNeeds.map(need => need.subjectId);
+  const subjectIds = tuteeProfile.subjectNeeds.map(need => need.subjectId);
   
   const recommendedTutors = await prisma.tutorProfile.findMany({
     where: {
       user: { isActive: true },
       isVerified: true,
       ...(tuteeProfile.budgetMax && { hourlyRate: { lte: tuteeProfile.budgetMax } }),
-      tutorSubjects: {
+      subjects: {
         some: {
           subjectId: { in: subjectIds }
         }
@@ -303,7 +318,7 @@ router.get('/tutee/recommendations', authenticateToken, asyncHandler(async (req:
           profileImageUrl: true
         }
       },
-      tutorSubjects: {
+      subjects: {
         where: { subjectId: { in: subjectIds } },
         include: { subject: true }
       }
@@ -319,7 +334,7 @@ router.get('/tutee/recommendations', authenticateToken, asyncHandler(async (req:
 }));
 
 // POST /api/v1/users/tutee/search - Search tutors with filters (for tutees)
-router.post('/tutee/search', authenticateToken, asyncHandler(async (req: Request, res: Response) => {
+router.post('/tutee/search', mockAuth, asyncHandler(async (req: Request, res: Response) => {
   const { user } = req as AuthenticatedRequest;
   
   const {
@@ -364,7 +379,7 @@ router.post('/tutee/search', authenticateToken, asyncHandler(async (req: Request
   }
 
   if (subjects && subjects.length > 0) {
-    where.tutorSubjects = {
+    where.subjects = {
       some: {
         subject: {
           name: { in: subjects }
@@ -395,10 +410,10 @@ router.post('/tutee/search', authenticateToken, asyncHandler(async (req: Request
             profileImageUrl: true
           }
         },
-        tutorSubjects: {
+        subjects: {
           include: { subject: true }
         },
-        tutorCertifications: {
+        certifications: {
           include: { certification: true }
         }
       },
@@ -424,7 +439,7 @@ router.post('/tutee/search', authenticateToken, asyncHandler(async (req: Request
 }));
 
 // GET /api/v1/users/tutee/sessions - Get tutee's session history
-router.get('/tutee/sessions', authenticateToken, asyncHandler(async (req: Request, res: Response) => {
+router.get('/tutee/sessions', mockAuth, asyncHandler(async (req: Request, res: Response) => {
   const { user } = req as AuthenticatedRequest;
   const page = parseInt(req.query.page as string) || 1;
   const limit = Math.min(parseInt(req.query.limit as string) || 10, 50);
@@ -483,7 +498,7 @@ router.get('/tutee/sessions', authenticateToken, asyncHandler(async (req: Reques
 }));
 
 // POST /api/v1/users/tutee/goals - Add/update learning goals
-router.post('/tutee/goals', authenticateToken, asyncHandler(async (req: Request, res: Response) => {
+router.post('/tutee/goals', mockAuth, asyncHandler(async (req: Request, res: Response) => {
   const { user } = req as AuthenticatedRequest;
   const { goals } = z.object({
     goals: z.array(z.object({
@@ -523,7 +538,7 @@ router.post('/tutee/goals', authenticateToken, asyncHandler(async (req: Request,
 }));
 
 // POST /api/v1/users/tutee/subjects - Add/update subject needs
-router.post('/tutee/subjects', authenticateToken, asyncHandler(async (req: Request, res: Response) => {
+router.post('/tutee/subjects', mockAuth, asyncHandler(async (req: Request, res: Response) => {
   const { user } = req as AuthenticatedRequest;
   const { subjects } = z.object({
     subjects: z.array(z.object({

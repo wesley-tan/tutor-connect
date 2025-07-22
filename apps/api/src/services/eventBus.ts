@@ -1,7 +1,7 @@
 import { PrismaClient } from '@tutorconnect/database';
 import { EventEmitter } from 'events';
 import { logger } from '../utils/logger';
-import crypto from 'crypto';
+import { randomUUID } from 'crypto';
 
 export interface TutorConnectEvent {
   type: string;
@@ -24,13 +24,13 @@ export class EventBus extends EventEmitter {
   /**
    * Emit an event with proper logging and persistence
    */
-  async emit(eventType: string, payload: any, metadata: Partial<TutorConnectEvent['metadata']> = {}): Promise<boolean> {
+  async emitEvent(eventType: string, payload: any, metadata?: Partial<TutorConnectEvent['metadata']>): Promise<boolean> {
     const event: TutorConnectEvent = {
       type: eventType,
       payload,
       metadata: {
         timestamp: new Date(),
-        correlationId: crypto.randomUUID(),
+        correlationId: randomUUID(),
         source: 'api',
         ...metadata
       }
@@ -78,14 +78,19 @@ export class EventBus extends EventEmitter {
    */
   async markEventProcessed(eventId: string, error?: Error): Promise<void> {
     try {
+      const updateData: any = {
+        status: error ? 'failed' : 'processed',
+        processedAt: new Date()
+      };
+
+      if (error) {
+        updateData.errorMessage = error.message;
+        updateData.retryCount = { increment: 1 };
+      }
+
       await this.prisma.eventLog.update({
         where: { id: eventId },
-        data: {
-          status: error ? 'failed' : 'processed',
-          processedAt: new Date(),
-          errorMessage: error?.message,
-          retryCount: error ? { increment: 1 } : undefined
-        }
+        data: updateData
       });
     } catch (updateError) {
       logger.error('Failed to mark event as processed', {
@@ -124,10 +129,12 @@ export class EventBus extends EventEmitter {
 
     for (const eventLog of failedEvents) {
       try {
-        const payload = JSON.parse(eventLog.payload);
-        const metadata = JSON.parse(eventLog.metadata as string);
+        const payloadStr = typeof eventLog.payload === 'string' ? eventLog.payload : JSON.stringify(eventLog.payload);
+        const payload = JSON.parse(payloadStr);
+        const metadataStr = eventLog.metadata;
+        const metadata = typeof metadataStr === 'string' ? JSON.parse(metadataStr) : {};
         
-        await this.emit(eventLog.type, payload, metadata);
+        await this.emitEvent(eventLog.type, payload, metadata);
         await this.markEventProcessed(eventLog.id);
         
         logger.info('Event retried successfully', {
@@ -210,10 +217,16 @@ export class EventBus extends EventEmitter {
     });
 
     const summary = stats.reduce((acc, stat) => {
-      if (!acc[stat.type]) {
-        acc[stat.type] = { pending: 0, processed: 0, failed: 0 };
+      const statType = stat.type;
+      if (!acc[statType]) {
+        acc[statType] = { pending: 0, processed: 0, failed: 0 };
       }
-      acc[stat.type][stat.status] = stat._count;
+      if (stat.status === 'pending' || stat.status === 'processed' || stat.status === 'failed') {
+        const statusEntry = acc[statType];
+        if (statusEntry && (stat.status in statusEntry)) {
+          statusEntry[stat.status] = stat._count;
+        }
+      }
       return acc;
     }, {} as Record<string, Record<string, number>>);
 

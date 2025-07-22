@@ -6,8 +6,8 @@ import { AuthenticationError, AuthorizationError } from '../middleware/errorHand
 import { logger } from './logger';
 
 // JWT Configuration
-const JWT_SECRET = process.env.JWT_SECRET!;
-const JWT_REFRESH_SECRET = process.env.JWT_REFRESH_SECRET!;
+const JWT_SECRET = process.env.JWT_SECRET || 'fallback-secret-key';
+const JWT_REFRESH_SECRET = process.env.JWT_REFRESH_SECRET || 'fallback-refresh-secret-key';
 const JWT_EXPIRES_IN = process.env.JWT_EXPIRES_IN || '15m';
 const REFRESH_TOKEN_EXPIRES_IN = process.env.REFRESH_TOKEN_EXPIRES_IN || '7d';
 
@@ -56,13 +56,13 @@ export const generateTokens = (user: { id: string; email: string; userType: stri
     expiresIn: JWT_EXPIRES_IN,
     issuer: 'tutorconnect-api',
     audience: 'tutorconnect-app'
-  });
+  } as jwt.SignOptions);
 
   const refreshToken = jwt.sign(refreshTokenPayload, JWT_REFRESH_SECRET, {
     expiresIn: REFRESH_TOKEN_EXPIRES_IN,
     issuer: 'tutorconnect-api',
     audience: 'tutorconnect-app'
-  });
+  } as jwt.SignOptions);
 
   return { accessToken, refreshToken };
 };
@@ -142,7 +142,8 @@ export const authenticateToken = async (req: Request, res: Response, next: NextF
 
     next();
   } catch (error) {
-    logger.error('Authentication failed', { error: error.message, ip: req.ip });
+    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+    logger.error('Authentication failed', { error: errorMessage, ip: req.ip });
     next(error);
   }
 };

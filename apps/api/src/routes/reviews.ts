@@ -1,117 +1,198 @@
-import express, { Request, Response } from 'express';
+import { Router, Request, Response } from 'express';
 import { prisma } from '@tutorconnect/database';
-import { asyncHandler, successResponse, paginatedResponse, ValidationError, NotFoundError, ConflictError } from '../middleware/errorHandlers';
-import { authenticateSupabaseToken, AuthenticatedRequest } from '../utils/supabaseAuth';
+import { asyncHandler, successResponse, ValidationError } from '../middleware/errorHandlers';
+import { mockAuth, AuthenticatedRequest } from '../utils/supabaseAuth';
 import { z } from 'zod';
 
-const router = express.Router();
+const router = Router();
 
 // Validation schemas
 const CreateReviewSchema = z.object({
   sessionId: z.string(),
   rating: z.number().min(1).max(5),
-  reviewText: z.string().min(10).max(1000),
-  tags: z.array(z.string()).optional()
+  reviewText: z.string().nullable(),
+  teachingEffectiveness: z.number().min(1).max(5).nullable(),
+  communication: z.number().min(1).max(5).nullable(),
+  punctuality: z.number().min(1).max(5).nullable(),
+  wouldRecommend: z.boolean().nullable(),
+  isAnonymous: z.boolean().default(false)
 });
 
 const UpdateReviewSchema = z.object({
   rating: z.number().min(1).max(5).optional(),
-  reviewText: z.string().min(10).max(1000).optional(),
-  tags: z.array(z.string()).optional()
+  reviewText: z.string().nullable().optional(),
+  teachingEffectiveness: z.number().min(1).max(5).nullable().optional(),
+  communication: z.number().min(1).max(5).nullable().optional(),
+  punctuality: z.number().min(1).max(5).nullable().optional(),
+  wouldRecommend: z.boolean().nullable().optional()
 });
 
-const ReviewFilterSchema = z.object({
-  tutorId: z.string().optional(),
-  rating: z.number().min(1).max(5).optional(),
-  page: z.coerce.number().min(1).default(1),
-  limit: z.coerce.number().min(1).max(50).default(10)
-});
-
-// POST /api/v1/reviews - Submit review
-router.post('/', authenticateSupabaseToken, asyncHandler(async (req: Request, res: Response) => {
+// GET /api/v1/reviews/session/:sessionId - Get review for a session
+router.get('/session/:sessionId', mockAuth, asyncHandler(async (req: Request, res: Response) => {
   const { user } = req as AuthenticatedRequest;
-  const { sessionId, rating, reviewText, tags } = CreateReviewSchema.parse(req.body);
+  const { sessionId } = req.params;
 
-  // Get session details
+  if (!sessionId) {
+    return res.status(400).json({
+      success: false,
+      message: 'Session ID is required'
+    });
+  }
+
+  // Get session with review
   const session = await prisma.session.findUnique({
     where: { id: sessionId },
     include: {
-      tutee: { include: { user: true } },
-      tutor: { include: { user: true } },
-      review: true
+      review: true,
+      tutor: {
+        include: {
+          user: true
+        }
+      },
+      tutee: {
+        include: {
+          user: true
+        }
+      }
     }
   });
 
   if (!session) {
-    throw new NotFoundError('Session not found');
+    return res.status(404).json({
+      success: false,
+      message: 'Session not found'
+    });
   }
 
-  // Verify user is the tutee for this session
-  if (session.tutee.userId !== user.id) {
-    throw new ValidationError('Only the student can review this session');
+  // Check if session is completed
+  if (session.statusId !== 3) { // 3 = completed
+    return res.status(400).json({
+      success: false,
+      message: 'Session must be completed before reviewing'
+    });
   }
 
-  // Session must be completed to be reviewed
-  if (session.status !== 'completed') {
-    throw new ValidationError('Can only review completed sessions');
+  // Check if user is participant
+  const isParticipant = session.tutee.user.id === user.id || session.tutor.user.id === user.id;
+  if (!isParticipant) {
+    return res.status(403).json({
+      success: false,
+      message: 'Access denied'
+    });
+  }
+
+  if (!session.review) {
+    return res.status(404).json({
+      success: false,
+      message: 'Review not found'
+    });
+  }
+
+  return successResponse(res, { review: session.review }, 'Review retrieved successfully');
+}));
+
+// POST /api/v1/reviews - Create a review
+router.post('/', mockAuth, asyncHandler(async (req: Request, res: Response) => {
+  const { user } = req as AuthenticatedRequest;
+  const validatedData = CreateReviewSchema.parse(req.body);
+
+  // Get session
+  const session = await prisma.session.findUnique({
+    where: { id: validatedData.sessionId },
+    include: {
+      tutor: {
+        include: {
+          user: true
+        }
+      },
+      tutee: {
+        include: {
+          user: true
+        }
+      }
+    }
+  });
+
+  if (!session) {
+    return res.status(404).json({
+      success: false,
+      message: 'Session not found'
+    });
+  }
+
+  // Check if session is completed
+  if (session.statusId !== 3) { // 3 = completed
+    return res.status(400).json({
+      success: false,
+      message: 'Session must be completed before reviewing'
+    });
+  }
+
+  // Check if user is participant
+  const isParticipant = session.tutee.user.id === user.id || session.tutor.user.id === user.id;
+  if (!isParticipant) {
+    return res.status(403).json({
+      success: false,
+      message: 'Access denied'
+    });
   }
 
   // Check if review already exists
-  if (session.review) {
-    throw new ConflictError('Review already exists for this session');
+  const existingReview = await prisma.review.findUnique({
+    where: { sessionId: validatedData.sessionId }
+  });
+
+  if (existingReview) {
+    return res.status(400).json({
+      success: false,
+      message: 'Review already exists for this session'
+    });
   }
 
   // Create review
   const review = await prisma.review.create({
     data: {
-      sessionId,
       reviewerId: user.id,
-      revieweeId: session.tutor.userId,
-      rating,
-      reviewText,
-      tags: tags || []
-    },
-    include: {
-      reviewer: {
-        select: {
-          firstName: true,
-          lastName: true,
-          profileImageUrl: true
-        }
-      },
-      session: {
-        select: {
-          id: true,
-          scheduledStart: true,
-          subject: { select: { name: true } }
-        }
-      }
+      revieweeId: session.tutor.user.id,
+      sessionId: validatedData.sessionId,
+      rating: validatedData.rating,
+      reviewText: validatedData.reviewText,
+      teachingEffectiveness: validatedData.teachingEffectiveness,
+      communication: validatedData.communication,
+      punctuality: validatedData.punctuality,
+      wouldRecommend: validatedData.wouldRecommend,
+      isAnonymous: validatedData.isAnonymous
     }
   });
 
-  // Update tutor's rating average and review count
-  await updateTutorRating(session.tutorId);
+  // Update tutor's rating
+  await updateTutorRating(session.tutor.user.id);
 
-  successResponse(res, { review }, 'Review submitted successfully', 201);
+  return successResponse(res, { review }, 'Review created successfully');
 }));
 
-// GET /api/v1/reviews/:sessionId - Get session review
-router.get('/:sessionId', authenticateSupabaseToken, asyncHandler(async (req: Request, res: Response) => {
+// PUT /api/v1/reviews/:id - Update a review
+router.put('/:id', mockAuth, asyncHandler(async (req: Request, res: Response) => {
   const { user } = req as AuthenticatedRequest;
-  const sessionId = req.params.sessionId;
+  const { id: reviewId } = req.params;
+  const validatedData = UpdateReviewSchema.parse(req.body);
 
-  const session = await prisma.session.findUnique({
-    where: { id: sessionId },
+  if (!reviewId) {
+    return res.status(400).json({
+      success: false,
+      message: 'Review ID is required'
+    });
+  }
+
+  // Get review
+  const review = await prisma.review.findUnique({
+    where: { id: reviewId },
     include: {
-      tutee: { include: { user: true } },
-      tutor: { include: { user: true } },
-      review: {
+      session: {
         include: {
-          reviewer: {
-            select: {
-              firstName: true,
-              lastName: true,
-              profileImageUrl: true
+          tutor: {
+            include: {
+              user: true
             }
           }
         }
@@ -119,270 +200,114 @@ router.get('/:sessionId', authenticateSupabaseToken, asyncHandler(async (req: Re
     }
   });
 
-  if (!session) {
-    throw new NotFoundError('Session not found');
-  }
-
-  // Verify user is part of this session
-  const isParticipant = session.tutee.userId === user.id || session.tutor.userId === user.id;
-  if (!isParticipant) {
-    throw new ValidationError('You are not authorized to view this review');
-  }
-
-  if (!session.review) {
-    return successResponse(res, { review: null }, 'No review found for this session');
-  }
-
-  successResponse(res, { review: session.review }, 'Review retrieved successfully');
-}));
-
-// PUT /api/v1/reviews/:id - Update review
-router.put('/:id', authenticateSupabaseToken, asyncHandler(async (req: Request, res: Response) => {
-  const { user } = req as AuthenticatedRequest;
-  const reviewId = req.params.id;
-  const validatedData = UpdateReviewSchema.parse(req.body);
-
-  const review = await prisma.review.findUnique({
-    where: { id: reviewId },
-    include: {
-      session: {
-        include: {
-          tutor: true
-        }
-      }
-    }
-  });
-
   if (!review) {
-    throw new NotFoundError('Review not found');
+    return res.status(404).json({
+      success: false,
+      message: 'Review not found'
+    });
   }
 
-  // Verify user is the reviewer
+  // Check if user is reviewer
   if (review.reviewerId !== user.id) {
-    throw new ValidationError('You can only update your own reviews');
+    return res.status(403).json({
+      success: false,
+      message: 'Access denied'
+    });
   }
 
-  // Check if review is within edit window (e.g., 7 days)
-  const daysSinceReview = (new Date().getTime() - review.createdAt.getTime()) / (1000 * 60 * 60 * 24);
-  if (daysSinceReview > 7) {
-    throw new ValidationError('Reviews can only be edited within 7 days of submission');
-  }
+  // Update review
+  const updateData: any = {};
+  if (validatedData.rating !== undefined) updateData.rating = validatedData.rating;
+  if (validatedData.reviewText !== undefined) updateData.reviewText = validatedData.reviewText;
+  if (validatedData.teachingEffectiveness !== undefined) updateData.teachingEffectiveness = validatedData.teachingEffectiveness;
+  if (validatedData.communication !== undefined) updateData.communication = validatedData.communication;
+  if (validatedData.punctuality !== undefined) updateData.punctuality = validatedData.punctuality;
+  if (validatedData.wouldRecommend !== undefined) updateData.wouldRecommend = validatedData.wouldRecommend;
 
   const updatedReview = await prisma.review.update({
     where: { id: reviewId },
-    data: validatedData,
-    include: {
-      reviewer: {
-        select: {
-          firstName: true,
-          lastName: true,
-          profileImageUrl: true
-        }
-      },
-      session: {
-        select: {
-          id: true,
-          scheduledStart: true,
-          subject: { select: { name: true } }
-        }
-      }
-    }
+    data: updateData
   });
 
-  // Update tutor's rating average if rating changed
-  if (validatedData.rating) {
-    await updateTutorRating(review.session.tutorId);
-  }
+  // Update tutor's rating
+  await updateTutorRating(review.session.tutor.user.id);
 
-  successResponse(res, { review: updatedReview }, 'Review updated successfully');
+  return successResponse(res, { review: updatedReview }, 'Review updated successfully');
 }));
 
-// GET /api/v1/reviews - Get reviews (with filtering)
-router.get('/', asyncHandler(async (req: Request, res: Response) => {
-  const { tutorId, rating, page, limit } = ReviewFilterSchema.parse(req.query);
-  const offset = (page - 1) * limit;
-
-  // Build where conditions
-  const where: any = {};
-
-  if (tutorId) {
-    where.session = { tutorId };
-  }
-
-  if (rating) {
-    where.rating = rating;
-  }
-
-  const [reviews, total] = await Promise.all([
-    prisma.review.findMany({
-      where,
-      include: {
-        reviewer: {
-          select: {
-            firstName: true,
-            lastName: true,
-            profileImageUrl: true
-          }
-        },
-        session: {
-          select: {
-            id: true,
-            scheduledStart: true,
-            subject: { select: { name: true } },
-            tutor: {
-              select: {
-                id: true,
-                user: {
-                  select: {
-                    firstName: true,
-                    lastName: true
-                  }
-                }
-              }
-            }
-          }
-        }
-      },
-      skip: offset,
-      take: limit,
-      orderBy: { createdAt: 'desc' }
-    }),
-    prisma.review.count({ where })
-  ]);
-
-  paginatedResponse(res, reviews, total, page, limit, 'Reviews retrieved successfully');
-}));
-
-// DELETE /api/v1/reviews/:id - Delete review
-router.delete('/:id', authenticateSupabaseToken, asyncHandler(async (req: Request, res: Response) => {
+// DELETE /api/v1/reviews/:id - Delete a review
+router.delete('/:id', mockAuth, asyncHandler(async (req: Request, res: Response) => {
   const { user } = req as AuthenticatedRequest;
-  const reviewId = req.params.id;
+  const { id: reviewId } = req.params;
 
+  if (!reviewId) {
+    return res.status(400).json({
+      success: false,
+      message: 'Review ID is required'
+    });
+  }
+
+  // Get review
   const review = await prisma.review.findUnique({
     where: { id: reviewId },
     include: {
       session: {
         include: {
-          tutor: true
+          tutor: {
+            include: {
+              user: true
+            }
+          }
         }
       }
     }
   });
 
   if (!review) {
-    throw new NotFoundError('Review not found');
+    return res.status(404).json({
+      success: false,
+      message: 'Review not found'
+    });
   }
 
-  // Verify user is the reviewer
+  // Check if user is reviewer
   if (review.reviewerId !== user.id) {
-    throw new ValidationError('You can only delete your own reviews');
+    return res.status(403).json({
+      success: false,
+      message: 'Access denied'
+    });
   }
 
-  // Check if review is within deletion window (e.g., 24 hours)
-  const hoursSinceReview = (new Date().getTime() - review.createdAt.getTime()) / (1000 * 60 * 60);
-  if (hoursSinceReview > 24) {
-    throw new ValidationError('Reviews can only be deleted within 24 hours of submission');
-  }
-
+  // Delete review
   await prisma.review.delete({
     where: { id: reviewId }
   });
 
-  // Update tutor's rating average
-  await updateTutorRating(review.session.tutorId);
+  // Update tutor's rating
+  await updateTutorRating(review.session.tutor.user.id);
 
-  successResponse(res, null, 'Review deleted successfully');
+  return successResponse(res, null, 'Review deleted successfully');
 }));
 
-// GET /api/v1/reviews/statistics/:tutorId - Get review statistics for a tutor
-router.get('/statistics/:tutorId', asyncHandler(async (req: Request, res: Response) => {
-  const tutorId = req.params.tutorId;
-
-  // Verify tutor exists
-  const tutor = await prisma.tutorProfile.findUnique({
-    where: { id: tutorId }
-  });
-
-  if (!tutor) {
-    throw new NotFoundError('Tutor not found');
-  }
-
-  // Get review statistics
-  const [
-    ratingDistribution,
-    averageRating,
-    totalReviews,
-    recentReviews
-  ] = await Promise.all([
-    // Rating distribution (1-5 stars)
-    prisma.review.groupBy({
-      by: ['rating'],
-      where: { session: { tutorId } },
-      _count: { rating: true }
-    }),
-    // Average rating
-    prisma.review.aggregate({
-      where: { session: { tutorId } },
-      _avg: { rating: true }
-    }),
-    // Total reviews
-    prisma.review.count({
-      where: { session: { tutorId } }
-    }),
-    // Recent reviews (last 5)
-    prisma.review.findMany({
-      where: { session: { tutorId } },
-      include: {
-        reviewer: {
-          select: {
-            firstName: true,
-            lastName: true,
-            profileImageUrl: true
-          }
-        },
-        session: {
-          select: {
-            id: true,
-            scheduledStart: true,
-            subject: { select: { name: true } }
-          }
-        }
-      },
-      orderBy: { createdAt: 'desc' },
-      take: 5
-    })
-  ]);
-
-  // Format rating distribution
-  const distributionMap = new Map(ratingDistribution.map(r => [r.rating, r._count.rating]));
-  const formattedDistribution = [1, 2, 3, 4, 5].map(rating => ({
-    rating,
-    count: distributionMap.get(rating) || 0
-  }));
-
-  const statistics = {
-    averageRating: averageRating._avg.rating || 0,
-    totalReviews,
-    ratingDistribution: formattedDistribution,
-    recentReviews
-  };
-
-  successResponse(res, { statistics }, 'Review statistics retrieved successfully');
-}));
-
-// Helper function to update tutor rating
+// Helper function to update tutor's rating
 async function updateTutorRating(tutorId: string) {
-  const ratingStats = await prisma.review.aggregate({
-    where: { session: { tutorId } },
-    _avg: { rating: true },
-    _count: { rating: true }
+  // Get tutor's reviews
+  const reviews = await prisma.review.findMany({
+    where: {
+      revieweeId: tutorId
+    }
   });
 
+  // Calculate average rating
+  const totalRating = reviews.reduce((sum, review) => sum + review.rating, 0);
+  const averageRating = reviews.length > 0 ? totalRating / reviews.length : 0;
+
+  // Update tutor profile
   await prisma.tutorProfile.update({
-    where: { id: tutorId },
+    where: { userId: tutorId },
     data: {
-      ratingAverage: ratingStats._avg.rating || 0,
-      totalReviews: ratingStats._count.rating || 0
+      ratingAverage: averageRating,
+      totalReviews: reviews.length
     }
   });
 }

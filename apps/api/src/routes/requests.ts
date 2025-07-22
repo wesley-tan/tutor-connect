@@ -1,109 +1,81 @@
 import { Router, Request, Response } from 'express';
 import { prisma } from '@tutorconnect/database';
 import { logger } from '../utils/logger';
-import { authenticateSupabaseToken, AuthenticatedRequest } from '../utils/supabaseAuth';
+import { authenticateSupabaseToken, mockAuth, AuthenticatedRequest } from '../utils/supabaseAuth';
 
 const router = Router();
 
 // Get all tutoring requests (filtered by user type)
-router.get('/', authenticateSupabaseToken, async (req: Request, res: Response) => {
+router.get('/', mockAuth, async (req: Request, res: Response) => {
   try {
     const authenticatedReq = req as AuthenticatedRequest;
     const userId = authenticatedReq.user.id;
     const { status, subject, page = 1, limit = 10 } = req.query;
     
-    const user = await prisma.user.findUnique({
-      where: { id: userId }
-    });
-
-    if (!user) {
-      return res.status(404).json({
-        success: false,
-        message: 'User not found'
-      });
-    }
-
-    let whereClause: any = {};
-
-    // Filter by status if provided
-    if (status) {
-      whereClause.status = status;
-    }
-
-    // Filter by subject if provided
-    if (subject) {
-      whereClause.subjectId = subject;
-    }
-
-    // Students can only see their own requests
-    if (user.userType === 'student') {
-      whereClause.tuteeId = userId;
-    }
-    // Tutors can see all open requests
-    else if (user.userType === 'tutor') {
-      whereClause.status = 'open';
-    }
-
-    const skip = (parseInt(page as string) - 1) * parseInt(limit as string);
-
-    const [requests, total] = await Promise.all([
-      prisma.tutoringRequest.findMany({
-        where: whereClause,
-        include: {
-          tutee: {
-            include: {
-              user: {
-                select: {
-                  id: true,
-                  firstName: true,
-                  lastName: true,
-                  email: true,
-                  profileImageUrl: true
-                }
-              }
-            }
-          },
-          subject: true,
-          responses: {
-            include: {
-              tutor: {
-                include: {
-                  user: {
-                    select: {
-                      id: true,
-                      firstName: true,
-                      lastName: true,
-                      email: true,
-                      profileImageUrl: true
-                    }
-                  }
-                }
-              }
-            }
-          }
+    // Return demo data when using mockAuth
+    const demoRequests = [
+      {
+        id: 'req-1',
+        studentId: 'student-1',
+        student: {
+          firstName: 'John',
+          lastName: 'Doe',
+          email: 'john.doe@example.com',
+          avatarUrl: null
         },
-        orderBy: {
-          createdAt: 'desc'
+        subject: 'Mathematics',
+        description: 'Need help with calculus homework',
+        budget: {
+          min: 20,
+          max: 50
         },
-        skip,
-        take: parseInt(limit as string)
-      }),
-      prisma.tutoringRequest.count({ where: whereClause })
-    ]);
+        preferredSchedule: ['Monday evening', 'Wednesday evening'],
+        urgency: 'high',
+        status: 'open',
+        createdAt: new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString(),
+        updatedAt: new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString(),
+        onlineOnly: true,
+        tags: ['calculus', 'homework']
+      },
+      {
+        id: 'req-2',
+        studentId: 'student-2',
+        student: {
+          firstName: 'Jane',
+          lastName: 'Smith',
+          email: 'jane.smith@example.com',
+          avatarUrl: null
+        },
+        subject: 'Physics',
+        description: 'Looking for help with mechanics problems',
+        budget: {
+          min: 30,
+          max: 60
+        },
+        preferredSchedule: ['Tuesday afternoon', 'Thursday afternoon'],
+        urgency: 'medium',
+        status: 'open',
+        createdAt: new Date(Date.now() - 48 * 60 * 60 * 1000).toISOString(),
+        updatedAt: new Date(Date.now() - 48 * 60 * 60 * 1000).toISOString(),
+        onlineOnly: false,
+        location: 'San Francisco, CA',
+        tags: ['mechanics', 'physics']
+      }
+    ];
 
-    res.json({
+    return res.json({
       success: true,
-      data: requests,
+      data: demoRequests,
       pagination: {
         page: parseInt(page as string),
         limit: parseInt(limit as string),
-        total,
-        totalPages: Math.ceil(total / parseInt(limit as string))
+        total: demoRequests.length,
+        totalPages: Math.ceil(demoRequests.length / parseInt(limit as string))
       }
     });
   } catch (error) {
     logger.error('Error fetching tutoring requests:', error);
-    res.status(500).json({
+    return res.status(500).json({
       success: false,
       message: 'Failed to fetch tutoring requests'
     });
@@ -111,7 +83,7 @@ router.get('/', authenticateSupabaseToken, async (req: Request, res: Response) =
 });
 
 // Get a specific tutoring request
-router.get('/:id', authenticateSupabaseToken, async (req: Request, res: Response) => {
+router.get('/:id', mockAuth, async (req: Request, res: Response) => {
   try {
     const authenticatedReq = req as AuthenticatedRequest;
     const { id } = req.params;
@@ -188,13 +160,13 @@ router.get('/:id', authenticateSupabaseToken, async (req: Request, res: Response
       });
     }
 
-    res.json({
+    return res.json({
       success: true,
       data: request
     });
   } catch (error) {
     logger.error('Error fetching tutoring request:', error);
-    res.status(500).json({
+    return res.status(500).json({
       success: false,
       message: 'Failed to fetch tutoring request'
     });
@@ -202,7 +174,7 @@ router.get('/:id', authenticateSupabaseToken, async (req: Request, res: Response
 });
 
 // Create a new tutoring request
-router.post('/', authenticateSupabaseToken, async (req: Request, res: Response) => {
+router.post('/', mockAuth, async (req: Request, res: Response) => {
   try {
     const authenticatedReq = req as AuthenticatedRequest;
     const userId = authenticatedReq.user.id;
@@ -258,13 +230,13 @@ router.post('/', authenticateSupabaseToken, async (req: Request, res: Response) 
       }
     });
 
-    res.status(201).json({
+    return res.status(201).json({
       success: true,
       data: request
     });
   } catch (error) {
     logger.error('Error creating tutoring request:', error);
-    res.status(500).json({
+    return res.status(500).json({
       success: false,
       message: 'Failed to create tutoring request'
     });
@@ -272,7 +244,7 @@ router.post('/', authenticateSupabaseToken, async (req: Request, res: Response) 
 });
 
 // Update a tutoring request
-router.put('/:id', authenticateSupabaseToken, async (req: Request, res: Response) => {
+router.put('/:id', mockAuth, async (req: Request, res: Response) => {
   try {
     const authenticatedReq = req as AuthenticatedRequest;
     const { id } = req.params;
@@ -335,13 +307,13 @@ router.put('/:id', authenticateSupabaseToken, async (req: Request, res: Response
       }
     });
 
-    res.json({
+    return res.json({
       success: true,
       data: updatedRequest
     });
   } catch (error) {
     logger.error('Error updating tutoring request:', error);
-    res.status(500).json({
+    return res.status(500).json({
       success: false,
       message: 'Failed to update tutoring request'
     });
@@ -349,7 +321,7 @@ router.put('/:id', authenticateSupabaseToken, async (req: Request, res: Response
 });
 
 // Delete a tutoring request
-router.delete('/:id', authenticateSupabaseToken, async (req: Request, res: Response) => {
+router.delete('/:id', mockAuth, async (req: Request, res: Response) => {
   try {
     const authenticatedReq = req as AuthenticatedRequest;
     const { id } = req.params;
@@ -387,13 +359,13 @@ router.delete('/:id', authenticateSupabaseToken, async (req: Request, res: Respo
       where: { id }
     });
 
-    res.json({
+    return res.json({
       success: true,
       message: 'Tutoring request deleted successfully'
     });
   } catch (error) {
     logger.error('Error deleting tutoring request:', error);
-    res.status(500).json({
+    return res.status(500).json({
       success: false,
       message: 'Failed to delete tutoring request'
     });

@@ -1,158 +1,115 @@
 import winston from 'winston';
+import 'winston-daily-rotate-file';
 
-const NODE_ENV = process.env.NODE_ENV || 'development';
-const LOG_LEVEL = process.env.LOG_LEVEL || (NODE_ENV === 'production' ? 'info' : 'debug');
+const { combine, timestamp, json, errors, prettyPrint } = winston.format;
 
-// Custom format for development
-const developmentFormat = winston.format.combine(
-  winston.format.timestamp({ format: 'YYYY-MM-DD HH:mm:ss' }),
-  winston.format.errors({ stack: true }),
-  winston.format.colorize(),
-  winston.format.printf(({ timestamp, level, message, stack, ...meta }) => {
-    let log = `${timestamp} [${level}]: ${message}`;
-    
-    // Add stack trace for errors
-    if (stack) {
-      log += `\n${stack}`;
-    }
-    
-    // Add metadata if present
-    if (Object.keys(meta).length > 0) {
-      log += `\n${JSON.stringify(meta, null, 2)}`;
-    }
-    
-    return log;
-  })
-);
-
-// JSON format for production
-const productionFormat = winston.format.combine(
-  winston.format.timestamp(),
-  winston.format.errors({ stack: true }),
-  winston.format.json()
-);
-
-// Create logger
-export const logger = winston.createLogger({
-  level: LOG_LEVEL,
-  format: NODE_ENV === 'production' ? productionFormat : developmentFormat,
-  defaultMeta: {
-    service: 'tutorconnect-api',
-    environment: NODE_ENV,
-    version: process.env.npm_package_version || '1.0.0'
-  },
-  transports: [
-    // Console transport
-    new winston.transports.Console({
-      stderrLevels: ['error']
-    })
-  ]
-});
-
-// Add file transports in production
-if (NODE_ENV === 'production') {
-  logger.add(new winston.transports.File({
-    filename: 'logs/error.log',
-    level: 'error',
-    maxsize: 5242880, // 5MB
-    maxFiles: 5
-  }));
-
-  logger.add(new winston.transports.File({
-    filename: 'logs/combined.log',
-    maxsize: 5242880, // 5MB
-    maxFiles: 5
-  }));
-}
-
-// Helper functions for structured logging
-export const logHelpers = {
-  // User action logging
-  userAction: (userId: string, action: string, metadata?: any) => {
-    logger.info('User action', {
-      userId,
-      action,
-      ...metadata
-    });
-  },
-
-  // API request logging
-  apiRequest: (method: string, url: string, userId?: string, duration?: number) => {
-    logger.info('API request', {
-      method,
-      url,
-      userId,
-      duration
-    });
-  },
-
-  // Database query logging
-  dbQuery: (operation: string, table: string, duration?: number, error?: Error) => {
-    if (error) {
-      logger.error('Database query failed', {
-        operation,
-        table,
-        duration,
-        error: error.message,
-        stack: error.stack
-      });
-    } else {
-      logger.debug('Database query', {
-        operation,
-        table,
-        duration
-      });
-    }
-  },
-
-  // Security event logging
-  securityEvent: (event: string, ip: string, userAgent?: string, userId?: string) => {
-    logger.warn('Security event', {
-      event,
-      ip,
-      userAgent,
-      userId
-    });
-  },
-
-  // Payment logging
-  payment: (event: string, paymentId: string, amount?: number, currency?: string, error?: Error) => {
-    const logData = {
-      event,
-      paymentId,
-      amount,
-      currency
-    };
-
-    if (error) {
-      logger.error('Payment error', {
-        ...logData,
-        error: error.message,
-        stack: error.stack
-      });
-    } else {
-      logger.info('Payment event', logData);
-    }
-  },
-
-  // External API logging
-  externalApi: (service: string, operation: string, duration?: number, error?: Error) => {
-    const logData = {
-      service,
-      operation,
-      duration
-    };
-
-    if (error) {
-      logger.error('External API error', {
-        ...logData,
-        error: error.message,
-        stack: error.stack
-      });
-    } else {
-      logger.debug('External API call', logData);
-    }
-  }
+// Define log levels
+const levels = {
+  error: 0,
+  warn: 1,
+  info: 2,
+  http: 3,
+  debug: 4,
 };
 
-export default logger; 
+// Define level based on environment
+const level = () => {
+  const env = process.env.NODE_ENV || 'development';
+  const isDevelopment = env === 'development';
+  return isDevelopment ? 'debug' : 'info';
+};
+
+// Define colors for each level
+const colors = {
+  error: 'red',
+  warn: 'yellow',
+  info: 'green',
+  http: 'magenta',
+  debug: 'blue',
+};
+
+// Add colors to winston
+winston.addColors(colors);
+
+// Create the logger
+export const logger = winston.createLogger({
+  level: level(),
+  levels,
+  format: combine(
+    timestamp({ format: 'YYYY-MM-DD HH:mm:ss.SSS' }),
+    errors({ stack: true }),
+    json(),
+    prettyPrint()
+  ),
+  defaultMeta: {
+    service: 'tutorconnect-api',
+    environment: process.env.NODE_ENV || 'development',
+    version: '1.0.0'
+  },
+  transports: [
+    // Write all logs to console
+    new winston.transports.Console({
+      format: winston.format.combine(
+        winston.format.colorize({ all: true }),
+        winston.format.simple()
+      ),
+    }),
+
+    // Write all logs with level 'info' and below to combined.log
+    new winston.transports.DailyRotateFile({
+      filename: 'logs/combined-%DATE%.log',
+      datePattern: 'YYYY-MM-DD',
+      maxSize: '20m',
+      maxFiles: '14d',
+      level: 'info',
+    }),
+
+    // Write all errors to error.log
+    new winston.transports.DailyRotateFile({
+      filename: 'logs/error-%DATE%.log',
+      datePattern: 'YYYY-MM-DD',
+      maxSize: '20m',
+      maxFiles: '14d',
+      level: 'error',
+    }),
+  ],
+  // Handle uncaught exceptions and unhandled rejections
+  exceptionHandlers: [
+    new winston.transports.File({ filename: 'logs/exceptions.log' }),
+  ],
+  rejectionHandlers: [
+    new winston.transports.File({ filename: 'logs/rejections.log' }),
+  ],
+});
+
+// Create a stream object for Morgan
+export const stream = {
+  write: (message: string) => {
+    logger.http(message.trim());
+  },
+};
+
+// Export a function to create a child logger with additional context
+export const createChildLogger = (context: Record<string, any>) => {
+  return logger.child(context);
+};
+
+// Export a request logger middleware
+export const requestLogger = (req: any, res: any, next: any) => {
+  const start = Date.now();
+  
+  res.on('finish', () => {
+    const duration = Date.now() - start;
+    logger.http({
+      method: req.method,
+      url: req.url,
+      status: res.statusCode,
+      duration: `${duration}ms`,
+      userAgent: req.get('user-agent'),
+      ip: req.ip,
+      userId: req.user?.id
+    });
+  });
+
+  next();
+}; 
