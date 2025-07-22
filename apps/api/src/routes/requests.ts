@@ -1,76 +1,93 @@
 import { Router, Request, Response } from 'express';
 import { prisma } from '@tutorconnect/database';
 import { logger } from '../utils/logger';
-import { authenticateSupabaseToken, mockAuth, AuthenticatedRequest } from '../utils/supabaseAuth';
+import { authenticateToken, AuthenticatedRequest } from '../utils/supabaseAuth';
 
 const router = Router();
 
 // Get all tutoring requests (filtered by user type)
-router.get('/', mockAuth, async (req: Request, res: Response) => {
+router.get('/', authenticateToken, async (req: Request, res: Response) => {
   try {
     const authenticatedReq = req as AuthenticatedRequest;
     const userId = authenticatedReq.user.id;
     const { status, subject, page = 1, limit = 10 } = req.query;
     
-    // Return demo data when using mockAuth
-    const demoRequests = [
-      {
-        id: 'req-1',
-        studentId: 'student-1',
-        student: {
-          firstName: 'John',
-          lastName: 'Doe',
-          email: 'john.doe@example.com',
-          avatarUrl: null
+    // Get user type
+    const user = await prisma.user.findUnique({
+      where: { id: userId }
+    });
+
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: 'User not found'
+      });
+    }
+
+    // Build query
+    const where: any = {};
+    if (status) where.status = status;
+    if (subject) where.subjectId = subject;
+
+    // Students see only their requests, tutors see all open requests
+    if (user.userType === 'student') {
+      where.tuteeId = userId;
+    } else if (user.userType === 'tutor') {
+      where.status = 'open';
+    }
+
+    // Get total count
+    const total = await prisma.tutoringRequest.count({ where });
+
+    // Get paginated requests
+    const requests = await prisma.tutoringRequest.findMany({
+      where,
+      include: {
+        tutee: {
+          include: {
+            user: {
+              select: {
+                id: true,
+                firstName: true,
+                lastName: true,
+                email: true,
+                profileImageUrl: true
+              }
+            }
+          }
         },
-        subject: 'Mathematics',
-        description: 'Need help with calculus homework',
-        budget: {
-          min: 20,
-          max: 50
-        },
-        preferredSchedule: ['Monday evening', 'Wednesday evening'],
-        urgency: 'high',
-        status: 'open',
-        createdAt: new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString(),
-        updatedAt: new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString(),
-        onlineOnly: true,
-        tags: ['calculus', 'homework']
+        subject: true,
+        responses: {
+          include: {
+            tutor: {
+              include: {
+                user: {
+                  select: {
+                    id: true,
+                    firstName: true,
+                    lastName: true,
+                    email: true,
+                    profileImageUrl: true
+                  }
+                }
+              }
+            }
+          }
+        }
       },
-      {
-        id: 'req-2',
-        studentId: 'student-2',
-        student: {
-          firstName: 'Jane',
-          lastName: 'Smith',
-          email: 'jane.smith@example.com',
-          avatarUrl: null
-        },
-        subject: 'Physics',
-        description: 'Looking for help with mechanics problems',
-        budget: {
-          min: 30,
-          max: 60
-        },
-        preferredSchedule: ['Tuesday afternoon', 'Thursday afternoon'],
-        urgency: 'medium',
-        status: 'open',
-        createdAt: new Date(Date.now() - 48 * 60 * 60 * 1000).toISOString(),
-        updatedAt: new Date(Date.now() - 48 * 60 * 60 * 1000).toISOString(),
-        onlineOnly: false,
-        location: 'San Francisco, CA',
-        tags: ['mechanics', 'physics']
-      }
-    ];
+      skip: (parseInt(page as string) - 1) * parseInt(limit as string),
+      take: parseInt(limit as string),
+      orderBy: { createdAt: 'desc' }
+    });
 
     return res.json({
       success: true,
-      data: demoRequests,
+      data: requests,
       pagination: {
         page: parseInt(page as string),
         limit: parseInt(limit as string),
-        total: demoRequests.length,
-        totalPages: Math.ceil(demoRequests.length / parseInt(limit as string))
+        total,
+        totalPages: Math.ceil(total / parseInt(limit as string))
       }
     });
   } catch (error) {
@@ -83,7 +100,7 @@ router.get('/', mockAuth, async (req: Request, res: Response) => {
 });
 
 // Get a specific tutoring request
-router.get('/:id', mockAuth, async (req: Request, res: Response) => {
+router.get('/:id', authenticateToken, async (req: Request, res: Response) => {
   try {
     const authenticatedReq = req as AuthenticatedRequest;
     const { id } = req.params;
@@ -174,7 +191,7 @@ router.get('/:id', mockAuth, async (req: Request, res: Response) => {
 });
 
 // Create a new tutoring request
-router.post('/', mockAuth, async (req: Request, res: Response) => {
+router.post('/', authenticateToken, async (req: Request, res: Response) => {
   try {
     const authenticatedReq = req as AuthenticatedRequest;
     const userId = authenticatedReq.user.id;
@@ -190,10 +207,13 @@ router.post('/', mockAuth, async (req: Request, res: Response) => {
 
     // Check if user is a student
     const user = await prisma.user.findUnique({
-      where: { id: userId }
+      where: { id: userId },
+      include: {
+        tuteeProfile: true
+      }
     });
 
-    if (!user || user.userType !== 'student') {
+    if (!user || user.userType !== 'student' || !user.tuteeProfile) {
       return res.status(403).json({
         success: false,
         message: 'Only students can create tutoring requests'
@@ -203,7 +223,7 @@ router.post('/', mockAuth, async (req: Request, res: Response) => {
     // Create the tutoring request
     const request = await prisma.tutoringRequest.create({
       data: {
-        tuteeId: userId,
+        tuteeId: user.tuteeProfile.id,
         subjectId,
         title,
         description,
@@ -244,7 +264,7 @@ router.post('/', mockAuth, async (req: Request, res: Response) => {
 });
 
 // Update a tutoring request
-router.put('/:id', mockAuth, async (req: Request, res: Response) => {
+router.put('/:id', authenticateToken, async (req: Request, res: Response) => {
   try {
     const authenticatedReq = req as AuthenticatedRequest;
     const { id } = req.params;
@@ -259,8 +279,15 @@ router.put('/:id', mockAuth, async (req: Request, res: Response) => {
     }
 
     // Check if request exists and user has permission
-    const existingRequest = await prisma.tutoringRequest.findUnique({
-      where: { id }
+    const existingRequest = await prisma.tutoringRequest.findFirst({
+      where: { id },
+      include: {
+        tutee: {
+          include: {
+            user: true
+          }
+        }
+      }
     });
 
     if (!existingRequest) {
@@ -271,7 +298,7 @@ router.put('/:id', mockAuth, async (req: Request, res: Response) => {
     }
 
     // Only the creator can update the request
-    if (existingRequest.tuteeId !== userId) {
+    if (existingRequest.tutee.user.id !== userId) {
       return res.status(403).json({
         success: false,
         message: 'Access denied'
@@ -321,7 +348,7 @@ router.put('/:id', mockAuth, async (req: Request, res: Response) => {
 });
 
 // Delete a tutoring request
-router.delete('/:id', mockAuth, async (req: Request, res: Response) => {
+router.delete('/:id', authenticateToken, async (req: Request, res: Response) => {
   try {
     const authenticatedReq = req as AuthenticatedRequest;
     const { id } = req.params;
@@ -335,8 +362,15 @@ router.delete('/:id', mockAuth, async (req: Request, res: Response) => {
     }
 
     // Check if request exists and user has permission
-    const existingRequest = await prisma.tutoringRequest.findUnique({
-      where: { id }
+    const existingRequest = await prisma.tutoringRequest.findFirst({
+      where: { id },
+      include: {
+        tutee: {
+          include: {
+            user: true
+          }
+        }
+      }
     });
 
     if (!existingRequest) {
@@ -347,7 +381,7 @@ router.delete('/:id', mockAuth, async (req: Request, res: Response) => {
     }
 
     // Only the creator can delete the request
-    if (existingRequest.tuteeId !== userId) {
+    if (existingRequest.tutee.user.id !== userId) {
       return res.status(403).json({
         success: false,
         message: 'Access denied'
@@ -368,6 +402,216 @@ router.delete('/:id', mockAuth, async (req: Request, res: Response) => {
     return res.status(500).json({
       success: false,
       message: 'Failed to delete tutoring request'
+    });
+  }
+});
+
+// Create a response to a tutoring request
+router.post('/:requestId/responses', authenticateToken, async (req: Request, res: Response) => {
+  try {
+    const authenticatedReq = req as AuthenticatedRequest;
+    const { requestId } = req.params;
+    const userId = authenticatedReq.user.id;
+    const { message, proposedRate, proposedSchedule } = req.body;
+
+    if (!requestId) {
+      return res.status(400).json({
+        success: false,
+        message: 'Request ID is required'
+      });
+    }
+
+    // Validate required fields
+    if (!message) {
+      return res.status(400).json({
+        success: false,
+        message: 'Response message is required'
+      });
+    }
+
+    // Check if user is a tutor
+    const user = await prisma.user.findUnique({
+      where: { id: userId },
+      include: {
+        tutorProfile: true
+      }
+    });
+
+    if (!user || user.userType !== 'tutor' || !user.tutorProfile) {
+      return res.status(403).json({
+        success: false,
+        message: 'Only tutors can respond to requests'
+      });
+    }
+
+    // Check if request exists
+    const request = await prisma.tutoringRequest.findFirst({
+      where: { id: requestId }
+    });
+
+    if (!request) {
+      return res.status(404).json({
+        success: false,
+        message: 'Tutoring request not found'
+      });
+    }
+
+    // Check if tutor has already responded
+    const existingResponse = await prisma.requestResponse.findFirst({
+      where: {
+        requestId,
+        tutorId: user.tutorProfile.id
+      }
+    });
+
+    if (existingResponse) {
+      return res.status(400).json({
+        success: false,
+        message: 'You have already responded to this request'
+      });
+    }
+
+    // Create the response
+    const response = await prisma.requestResponse.create({
+      data: {
+        requestId,
+        tutorId: user.tutorProfile.id,
+        message,
+        proposedRate: proposedRate ? parseFloat(proposedRate) : null,
+        proposedSchedule
+      },
+      include: {
+        tutor: {
+          include: {
+            user: {
+              select: {
+                id: true,
+                firstName: true,
+                lastName: true,
+                email: true,
+                profileImageUrl: true
+              }
+            }
+          }
+        }
+      }
+    });
+
+    return res.status(201).json({
+      success: true,
+      data: response
+    });
+  } catch (error) {
+    logger.error('Error creating request response:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Failed to create request response'
+    });
+  }
+});
+
+// Accept a tutor's response
+router.post('/:requestId/responses/:responseId/accept', authenticateToken, async (req: Request, res: Response) => {
+  try {
+    const authenticatedReq = req as AuthenticatedRequest;
+    const { requestId, responseId } = req.params;
+    const userId = authenticatedReq.user.id;
+
+    if (!requestId || !responseId) {
+      return res.status(400).json({
+        success: false,
+        message: 'Request ID and Response ID are required'
+      });
+    }
+
+    // Check if request exists and user owns it
+    const request = await prisma.tutoringRequest.findFirst({
+      where: { id: requestId },
+      include: {
+        tutee: {
+          include: {
+            user: true
+          }
+        }
+      }
+    });
+
+    if (!request) {
+      return res.status(404).json({
+        success: false,
+        message: 'Tutoring request not found'
+      });
+    }
+
+    if (request.tutee.user.id !== userId) {
+      return res.status(403).json({
+        success: false,
+        message: 'Access denied'
+      });
+    }
+
+    // Check if response exists
+    const response = await prisma.requestResponse.findFirst({
+      where: { 
+        id: responseId,
+        requestId
+      },
+      include: {
+        tutor: {
+          include: {
+            user: true
+          }
+        }
+      }
+    });
+
+    if (!response) {
+      return res.status(404).json({
+        success: false,
+        message: 'Response not found'
+      });
+    }
+
+    // Update response and request status
+    const [updatedResponse, updatedRequest] = await prisma.$transaction([
+      prisma.requestResponse.update({
+        where: { id: responseId },
+        data: { isAccepted: true }
+      }),
+      prisma.tutoringRequest.update({
+        where: { id: requestId },
+        data: { status: 'in_progress' }
+      })
+    ]);
+
+    // Create or get conversation between student and tutor
+    const conversation = await prisma.conversation.upsert({
+      where: {
+        participantA_participantB: {
+          participantA: userId,
+          participantB: response.tutor.user.id
+        }
+      },
+      create: {
+        participantA: userId,
+        participantB: response.tutor.user.id
+      },
+      update: {}
+    });
+
+    return res.json({
+      success: true,
+      data: {
+        response: updatedResponse,
+        request: updatedRequest,
+        conversation
+      }
+    });
+  } catch (error) {
+    logger.error('Error accepting request response:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Failed to accept response'
     });
   }
 });

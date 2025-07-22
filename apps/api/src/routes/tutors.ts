@@ -1,82 +1,132 @@
 import express, { Request, Response } from 'express';
-import { prisma, Prisma } from '@tutorconnect/database';
-import { asyncHandler, successResponse } from '../middleware/errorHandlers';
+import { prisma } from '@tutorconnect/database';
+import { asyncHandler, successResponse, paginatedResponse } from '../middleware/errorHandlers';
+import { logger } from '../utils/logger';
+import { AuthenticatedRequest } from '../utils/supabaseAuth';
+import { Prisma, User, TutorSubject } from '@prisma/client';
+
+interface TutorWithProfile extends Pick<User, 'id' | 'firstName' | 'lastName' | 'email' | 'profileImageUrl'> {
+  tutorProfile: {
+    id: string;
+    hourlyRate: Prisma.Decimal;
+    bio: string | null;
+    ratingAverage: Prisma.Decimal;
+    totalReviews: number;
+    subjects: Array<{
+      subject: {
+        name: string;
+      };
+      proficiencyLevel: number;
+    }>;
+  } | null;
+}
 
 const router = express.Router();
 
-// Health check endpoint for basic connectivity testing
-router.get('/health', asyncHandler(async (req: Request, res: Response) => {
-  successResponse(res, {
-    status: 'ok',
-    endpoint: 'tutors',
-    timestamp: new Date().toISOString()
-  }, 'Tutors endpoint is healthy');
-}));
+// GET /api/v1/tutors - Search for tutors
+router.get('/', asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
+  const page = parseInt(req.query.page as string) || 1;
+  const limit = Math.min(parseInt(req.query.limit as string) || 10, 50);
+  const skip = (page - 1) * limit;
 
-// GET /api/v1/tutors - Search for tutors (simplified)
-router.get('/', asyncHandler(async (req: Request, res: Response) => {
   try {
-    // Return demo data to make frontend work better
-    const demoTutors = [
-      {
-        id: 'tutor-1',
-        firstName: 'Dr. Sarah',
-        lastName: 'Johnson',
-        email: 'sarah.johnson@example.com',
-        profileImageUrl: null,
-        hourlyRate: 50,
-        bio: 'Experienced mathematics and physics tutor with a PhD in Applied Mathematics.',
-        subjects: ['Mathematics', 'Physics', 'Calculus'],
-        rating: 4.8,
-        totalSessions: 150,
-        isOnline: true,
-        availability: ['Monday evening', 'Wednesday evening', 'Saturday morning']
+    // Get filters from query params
+    const { subject, minRating, maxPrice } = req.query;
+
+    // Build where clause
+    const where: Prisma.UserWhereInput = {
+      userType: 'tutor',
+      tutorProfile: {
+        isVerified: true,
+        ...(subject && {
+          subjects: {
+            some: {
+              subject: {
+                name: subject as string
+              }
+            }
+          }
+        }),
+        ...(minRating && {
+          ratingAverage: {
+            gte: parseFloat(minRating as string)
+          }
+        }),
+        ...(maxPrice && {
+          hourlyRate: {
+            lte: parseFloat(maxPrice as string)
+          }
+        })
+      }
+    };
+
+    // Get total count
+    const total = await prisma.user.count({ where });
+
+    // Get tutors
+    const tutors = await prisma.user.findMany({
+      where,
+      select: {
+        id: true,
+        firstName: true,
+        lastName: true,
+        email: true,
+        profileImageUrl: true,
+        tutorProfile: {
+          select: {
+            id: true,
+            hourlyRate: true,
+            bio: true,
+            ratingAverage: true,
+            totalReviews: true,
+            subjects: {
+              select: {
+                subject: {
+                  select: {
+                    name: true
+                  }
+                },
+                proficiencyLevel: true
+              }
+            }
+          }
+        }
       },
-      {
-        id: 'tutor-2',
-        firstName: 'Prof. Michael',
-        lastName: 'Chen',
-        email: 'michael.chen@example.com',
-        profileImageUrl: null,
-        hourlyRate: 45,
-        bio: 'Chemistry professor with 10+ years of teaching experience.',
-        subjects: ['Chemistry', 'Biology', 'Organic Chemistry'],
-        rating: 4.9,
-        totalSessions: 200,
-        isOnline: true,
-        availability: ['Tuesday afternoon', 'Thursday afternoon', 'Sunday morning']
+      skip,
+      take: limit,
+      orderBy: {
+        tutorProfile: {
+          ratingAverage: 'desc'
+        }
       }
-    ];
-    
-    const page = parseInt(req.query.page as string) || 1;
-    const limit = Math.min(parseInt(req.query.limit as string) || 10, 50);
-    
-    return successResponse(res, {
-      data: demoTutors,
-      pagination: {
-        page,
-        limit,
-        total: demoTutors.length,
-        totalPages: Math.ceil(demoTutors.length / limit)
-      }
-    }, 'Tutors retrieved successfully (demo mode)');
+    }) as TutorWithProfile[];
+
+    // Transform data for response
+    const formattedTutors = tutors.map(tutor => ({
+      id: tutor.id,
+      firstName: tutor.firstName,
+      lastName: tutor.lastName,
+      email: tutor.email,
+      profileImageUrl: tutor.profileImageUrl,
+      hourlyRate: tutor.tutorProfile?.hourlyRate || 0,
+      bio: tutor.tutorProfile?.bio || '',
+      rating: tutor.tutorProfile?.ratingAverage || 0,
+      totalReviews: tutor.tutorProfile?.totalReviews || 0,
+      subjects: tutor.tutorProfile?.subjects.map(s => ({
+        name: s.subject.name,
+        proficiencyLevel: s.proficiencyLevel
+      })) || []
+    }));
+
+    return paginatedResponse(res, formattedTutors, total, page, limit, 'Tutors retrieved successfully');
   } catch (error) {
-    // logger.error('Error fetching tutors:', error); // logger is not defined in this file
-    // Return empty array on error
-    return successResponse(res, {
-      data: [],
-      pagination: {
-        page: 1,
-        limit: 10,
-        total: 0,
-        totalPages: 0
-      }
-    }, 'No tutors found');
+    logger.error('Error fetching tutors:', error);
+    throw error;
   }
 }));
 
-// GET /api/v1/tutors/:id - Get tutor profile (simplified)
-router.get('/:id', asyncHandler(async (req: Request, res: Response) => {
+// GET /api/v1/tutors/:id - Get tutor profile
+router.get('/:id', asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
   const tutorId = req.params.id;
 
   if (!tutorId) {
@@ -86,22 +136,69 @@ router.get('/:id', asyncHandler(async (req: Request, res: Response) => {
     });
   }
 
-  // Return demo tutor profile
-  const demoTutor = {
-    id: tutorId,
-    firstName: 'Demo',
-    lastName: 'Tutor',
-    email: 'tutor@example.com',
-    profileImageUrl: null,
-    hourlyRate: 50,
-    bio: 'Experienced tutor with expertise in multiple subjects.',
-    ratingAverage: 4.8,
-    totalReviews: 25,
-    subjects: ['Mathematics', 'Physics', 'Chemistry'],
-    availability: 'Available weekdays and weekends'
-  };
+  try {
+    const tutor = await prisma.user.findFirst({
+      where: {
+        id: tutorId,
+        userType: 'tutor' as const
+      },
+      select: {
+        id: true,
+        firstName: true,
+        lastName: true,
+        email: true,
+        profileImageUrl: true,
+        tutorProfile: {
+          select: {
+            id: true,
+            hourlyRate: true,
+            bio: true,
+            ratingAverage: true,
+            totalReviews: true,
+            subjects: {
+              select: {
+                subject: {
+                  select: {
+                    name: true
+                  }
+                },
+                proficiencyLevel: true
+              }
+            }
+          }
+        }
+      }
+    }) as TutorWithProfile | null;
 
-  return successResponse(res, { tutor: demoTutor }, 'Tutor profile retrieved successfully (demo mode)');
+    if (!tutor) {
+      return res.status(404).json({
+        success: false,
+        message: 'Tutor not found'
+      });
+    }
+
+    // Transform data for response
+    const formattedTutor = {
+      id: tutor.id,
+      firstName: tutor.firstName,
+      lastName: tutor.lastName,
+      email: tutor.email,
+      profileImageUrl: tutor.profileImageUrl,
+      hourlyRate: tutor.tutorProfile?.hourlyRate || 0,
+      bio: tutor.tutorProfile?.bio || '',
+      rating: tutor.tutorProfile?.ratingAverage || 0,
+      totalReviews: tutor.tutorProfile?.totalReviews || 0,
+      subjects: tutor.tutorProfile?.subjects.map(s => ({
+        name: s.subject.name,
+        proficiencyLevel: s.proficiencyLevel
+      })) || []
+    };
+
+    return successResponse(res, { tutor: formattedTutor }, 'Tutor profile retrieved successfully');
+  } catch (error) {
+    logger.error('Error fetching tutor profile:', error);
+    throw error;
+  }
 }));
 
 export default router; 

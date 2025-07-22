@@ -91,7 +91,7 @@ Current test coverage is approximately 10-15% based on file analysis. No formal 
 - CI: GitHub Actions with containerized services
 
 ### Scenarios
-```gherkin
+```
 Feature: Session Booking
 
 Scenario: Student books a session

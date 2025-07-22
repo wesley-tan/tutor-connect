@@ -1,51 +1,21 @@
 {
-  "name": "tutorconnect",
+  "name": "tutor-matching",
   "version": "1.0.0",
   "private": true,
-  "description": "TutorConnect - Academic Tutoring Marketplace Platform",
+  "scripts": {
+    "dev": "concurrently \"cd apps/api && npm run dev\" \"cd apps/web && npm run dev\"",
+    "dev:api": "cd apps/api && npm run dev",
+    "dev:web": "cd apps/web && npm run dev",
+    "build": "turbo run build",
+    "test": "turbo run test",
+    "lint": "turbo run lint"
+  },
+  "devDependencies": {
+    "concurrently": "^8.2.2",
+    "turbo": "^1.12.4"
+  },
   "workspaces": [
     "apps/*",
     "packages/*"
-  ],
-  "scripts": {
-    "dev": "turbo run dev",
-    "build": "turbo run build",
-    "lint": "turbo run lint",
-    "lint:fix": "turbo run lint:fix",
-    "type-check": "turbo run type-check",
-    "test": "turbo run test",
-    "test:e2e": "turbo run test:e2e",
-    "clean": "turbo run clean",
-    "db:setup": "cd packages/database && npm run setup",
-    "db:reset": "cd packages/database && npm run reset",
-    "db:studio": "cd packages/database && npm run studio",
-    "db:deploy": "cd packages/database && npm run deploy",
-    "docker:up": "docker-compose up -d",
-    "docker:down": "docker-compose down",
-    "docker:reset": "docker-compose down -v && docker-compose up -d",
-    "prepare": "husky install"
-  },
-  "devDependencies": {
-    "turbo": "^1.10.12",
-    "husky": "^8.0.3",
-    "lint-staged": "^13.2.2",
-    "@commitlint/cli": "^17.6.3",
-    "@commitlint/config-conventional": "^17.6.3"
-  },
-  "engines": {
-    "node": ">=18.0.0",
-    "npm": ">=9.0.0"
-  },
-  "lint-staged": {
-    "*.{js,jsx,ts,tsx}": [
-      "eslint --fix",
-      "prettier --write"
-    ],
-    "*.{json,md,yml,yaml}": [
-      "prettier --write"
-    ]
-  },
-  "commitlint": {
-    "extends": ["@commitlint/config-conventional"]
-  }
+  ]
 } 

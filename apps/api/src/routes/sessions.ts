@@ -34,8 +34,6 @@ const UpdateSessionSchema = z.object({
 // GET /api/v1/sessions - Get user's sessions
 router.get('/', mockAuth, asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
   try {
-    const { user } = req;
-    
     // Return demo data to make frontend work better
     const demoSessions = [
       {
@@ -62,10 +60,10 @@ router.get('/', mockAuth, asyncHandler(async (req: AuthenticatedRequest, res: Re
         },
         tutee: {
           user: {
-            id: user.id,
-            firstName: user.firstName || 'John',
-            lastName: user.lastName || 'Doe',
-            email: user.email,
+            id: 'tutee-1',
+            firstName: 'John',
+            lastName: 'Doe',
+            email: 'john.doe@example.com',
             profileImageUrl: null
           }
         },
@@ -98,10 +96,10 @@ router.get('/', mockAuth, asyncHandler(async (req: AuthenticatedRequest, res: Re
         },
         tutee: {
           user: {
-            id: user.id,
-            firstName: user.firstName || 'John',
-            lastName: user.lastName || 'Doe',
-            email: user.email,
+            id: 'tutee-1',
+            firstName: 'John',
+            lastName: 'Doe',
+            email: 'john.doe@example.com',
             profileImageUrl: null
           }
         },
@@ -116,7 +114,6 @@ router.get('/', mockAuth, asyncHandler(async (req: AuthenticatedRequest, res: Re
     const limit = Math.min(parseInt(req.query.limit as string) || 20, 50);
     
     return successResponse(res, {
-      success: true,
       data: demoSessions,
       pagination: {
         page,
@@ -128,16 +125,14 @@ router.get('/', mockAuth, asyncHandler(async (req: AuthenticatedRequest, res: Re
   } catch (error) {
     logger.error('Error in GET /sessions:', error);
     return successResponse(res, {
-      success: false,
       data: [],
       pagination: {
         page: 1,
         limit: 20,
         total: 0,
         totalPages: 0
-      },
-      error: error instanceof Error ? error.message : 'Unknown error occurred'
-    }, 'Error retrieving sessions');
+      }
+    }, 'No sessions found');
   }
 }));
 

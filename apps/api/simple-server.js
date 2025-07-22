@@ -33,9 +33,62 @@ app.get('/health', (req, res) => {
   });
 });
 
+// Auth endpoints
+app.get('/api/auth/me', (req, res) => {
+  console.log('👤 GET /api/auth/me');
+  res.json({
+    success: true,
+    data: {
+      id: 'user1',
+      email: 'john@example.com',
+      firstName: 'John',
+      lastName: 'Doe',
+      userType: 'student',
+      profileImageUrl: null,
+      isVerified: true,
+      tuteeProfile: {
+        id: 'tutee1',
+        gradeLevel: '12th',
+        schoolName: 'Example High School'
+      }
+    }
+  });
+});
+
+// Subjects endpoint
+app.get('/api/subjects', (req, res) => {
+  console.log('📚 GET /api/subjects');
+  res.json({
+    success: true,
+    data: [
+      {
+        id: 'math',
+        name: 'Mathematics',
+        category: 'General',
+        description: 'All math subjects',
+        isActive: true
+      },
+      {
+        id: 'physics',
+        name: 'Physics',
+        category: 'Science',
+        description: 'Physics and related topics',
+        isActive: true
+      },
+      {
+        id: 'chemistry',
+        name: 'Chemistry',
+        category: 'Science',
+        description: 'Chemistry and related topics',
+        isActive: true
+      }
+    ]
+  });
+});
+
 // Mock API endpoints
-app.get('/api/v1/conversations', (req, res) => {
-  console.log('📨 GET /api/v1/conversations');
+app.get('/api/conversations', (req, res) => {
+  console.log('📨 GET /api/conversations');
   res.json({
     success: true,
     data: [
@@ -71,8 +124,8 @@ app.get('/api/v1/conversations', (req, res) => {
   });
 });
 
-app.get('/api/v1/sessions', (req, res) => {
-  console.log('📅 GET /api/v1/sessions');
+app.get('/api/sessions', (req, res) => {
+  console.log('📅 GET /api/sessions');
   res.json({
     success: true,
     data: [
@@ -97,8 +150,8 @@ app.get('/api/v1/sessions', (req, res) => {
   });
 });
 
-app.get('/api/v1/requests', (req, res) => {
-  console.log('📝 GET /api/v1/requests');
+app.get('/api/requests', (req, res) => {
+  console.log('📝 GET /api/requests');
   res.json({
     success: true,
     data: [
@@ -158,10 +211,11 @@ app.use('*', (req, res) => {
 app.listen(PORT, () => {
   console.log(`🚀 Simple API server running on port ${PORT}`);
   console.log(`🔗 Health check: http://localhost:${PORT}/health`);
-  console.log(`📊 API endpoints: http://localhost:${PORT}/api/v1/`);
-  console.log(`📨 Conversations: http://localhost:${PORT}/api/v1/conversations`);
-  console.log(`📅 Sessions: http://localhost:${PORT}/api/v1/sessions`);
-  console.log(`📝 Requests: http://localhost:${PORT}/api/v1/requests`);
+  console.log(`👤 Auth: http://localhost:${PORT}/api/auth/me`);
+  console.log(`📚 Subjects: http://localhost:${PORT}/api/subjects`);
+  console.log(`📨 Conversations: http://localhost:${PORT}/api/conversations`);
+  console.log(`📅 Sessions: http://localhost:${PORT}/api/sessions`);
+  console.log(`📝 Requests: http://localhost:${PORT}/api/requests`);
 });
 
 // Graceful shutdown
