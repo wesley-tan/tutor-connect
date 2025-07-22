@@ -4,7 +4,7 @@ import helmet from 'helmet';
 import compression from 'compression';
 import { json, urlencoded } from 'express';
 import { rateLimit } from 'express-rate-limit';
-import { authenticateSupabaseToken, mockAuth } from './utils/supabaseAuth';
+import { authenticateToken, mockAuth } from './utils/supabaseAuth';
 import { errorHandler } from './middleware/errorHandlers';
 import { requestLogger, stream } from './utils/logger';
 import morgan from 'morgan';
@@ -16,6 +16,7 @@ import tutorsRouter from './routes/tutors';
 import usersRouter from './routes/users';
 import authRouter from './routes/auth';
 import referenceRouter from './routes/reference';
+import requestsRouter from './routes/requests';
 
 const app = express();
 
@@ -79,7 +80,7 @@ app.get('/api/v1/health', (req, res) => {
 
 // Conditional authentication for development
 const useAuth = false; // Temporarily force mock auth for testing
-const authMiddleware = useAuth ? authenticateSupabaseToken : mockAuth;
+const authMiddleware = useAuth ? authenticateToken : mockAuth;
 
 // API routes
 const apiRouter = express.Router();
@@ -88,6 +89,7 @@ apiRouter.use('/sessions', authMiddleware, sessionsRouter);
 apiRouter.use('/conversations', authMiddleware, conversationsRouter);
 apiRouter.use('/tutors', authMiddleware, tutorsRouter);
 apiRouter.use('/users', authMiddleware, usersRouter);
+apiRouter.use('/requests', authMiddleware, requestsRouter);
 apiRouter.use('/', referenceRouter);
 
 // Mount all routes under /api/v1

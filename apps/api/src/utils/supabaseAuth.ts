@@ -1,16 +1,18 @@
-import { createClient } from '@supabase/supabase-js';
 import { Request, Response, NextFunction } from 'express';
+import { createClient } from '@supabase/supabase-js';
 import { prisma } from '@tutorconnect/database';
+import { AuthenticationError } from '../middleware/errorHandlers';
 import { logger } from './logger';
 
+// Initialize Supabase client
 const supabaseUrl = process.env.SUPABASE_URL;
 const supabaseServiceKey = process.env.SUPABASE_SERVICE_KEY;
 
-let supabase: ReturnType<typeof createClient> | null = null;
-
-if (supabaseUrl && supabaseServiceKey) {
-  supabase = createClient(supabaseUrl, supabaseServiceKey);
+if (!supabaseUrl || !supabaseServiceKey) {
+  throw new Error('Missing Supabase environment variables');
 }
+
+const supabase = createClient(supabaseUrl, supabaseServiceKey);
 
 export interface AuthenticatedRequest extends Request {
   user: {
@@ -23,54 +25,28 @@ export interface AuthenticatedRequest extends Request {
   };
 }
 
-export const authenticateSupabaseToken = async (
-  req: Request,
-  res: Response,
-  next: NextFunction
-): Promise<void> => {
+// Verify JWT and attach user to request
+export const authenticateToken = async (req: Request, res: Response, next: NextFunction) => {
   try {
-    if (!supabase) {
-      logger.warn('Supabase not configured, skipping authentication');
-      return next();
-    }
-
     const authHeader = req.headers.authorization;
-    if (!authHeader || !authHeader.startsWith('Bearer ')) {
-      res.status(401).json({
-        success: false,
-        message: 'No valid authorization header provided'
-      });
-      return;
+    if (!authHeader?.startsWith('Bearer ')) {
+      throw new AuthenticationError('No token provided');
     }
 
     const token = authHeader.split(' ')[1];
-    const { data: { user: supabaseUser }, error } = await supabase.auth.getUser(token);
+    const { data: { user }, error } = await supabase.auth.getUser(token);
 
-    if (error || !supabaseUser) {
-      res.status(401).json({
-        success: false,
-        message: 'Invalid or expired token'
-      });
-      return;
+    if (error || !user) {
+      throw new AuthenticationError('Invalid token');
     }
 
     // Get user from database
     const dbUser = await prisma.user.findUnique({
-      where: { email: supabaseUser.email! },
-      select: {
-        id: true,
-        email: true,
-        userType: true,
-        isActive: true
-      }
+      where: { email: user.email! }
     });
 
-    if (!dbUser || !dbUser.isActive) {
-      res.status(401).json({
-        success: false,
-        message: 'User not found or inactive'
-      });
-      return;
+    if (!dbUser) {
+      throw new AuthenticationError('User not found');
     }
 
     // Attach user to request
@@ -78,45 +54,24 @@ export const authenticateSupabaseToken = async (
       id: dbUser.id,
       email: dbUser.email,
       userType: dbUser.userType,
-      supabaseId: supabaseUser.id
+      supabaseId: user.id,
+      firstName: dbUser.firstName,
+      lastName: dbUser.lastName
     };
 
     next();
   } catch (error) {
     logger.error('Authentication error:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Authentication failed'
-    });
+    next(error);
   }
 };
 
-export const requireRole = (requiredRole: string) => {
-  return (req: Request, res: Response, next: NextFunction): void => {
-    const user = (req as AuthenticatedRequest).user;
-    
-    if (!user) {
-      res.status(401).json({
-        success: false,
-        message: 'Authentication required'
-      });
-      return;
-    }
-
-    if (user.userType !== requiredRole) {
-      res.status(403).json({
-        success: false,
-        message: `Access denied. Required role: ${requiredRole}`
-      });
-      return;
-    }
-
-    next();
-  };
-};
-
-// Mock authentication middleware for development
+// Development mock auth - only use if explicitly enabled
 export const mockAuth = (req: Request, res: Response, next: NextFunction) => {
+  if (process.env.NODE_ENV !== 'development') {
+    throw new Error('Mock auth can only be used in development');
+  }
+  
   (req as AuthenticatedRequest).user = {
     id: 'user-1',
     email: 'demo@example.com',

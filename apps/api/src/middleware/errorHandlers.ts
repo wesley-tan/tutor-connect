@@ -1,206 +1,131 @@
 import { Request, Response, NextFunction } from 'express';
-import { ZodError } from 'zod';
 import { logger } from '../utils/logger';
+import { Prisma } from '@prisma/client';
+import { ZodError } from 'zod';
 
 // Custom error classes
-export class AppError extends Error {
-  public statusCode: number;
-  public code: string;
-  public isOperational: boolean;
-
-  constructor(message: string, statusCode: number, code: string = 'INTERNAL_ERROR') {
+export class ValidationError extends Error {
+  constructor(message: string) {
     super(message);
-    this.statusCode = statusCode;
-    this.code = code;
-    this.isOperational = true;
-
-    Error.captureStackTrace(this, this.constructor);
+    this.name = 'ValidationError';
   }
 }
 
-export class ValidationError extends AppError {
+export class NotFoundError extends Error {
   constructor(message: string) {
-    super(message, 400, 'VALIDATION_ERROR');
+    super(message);
+    this.name = 'NotFoundError';
   }
 }
 
-export class AuthenticationError extends AppError {
-  constructor(message: string = 'Authentication required') {
-    super(message, 401, 'AUTHENTICATION_ERROR');
-  }
-}
-
-export class AuthorizationError extends AppError {
-  constructor(message: string = 'Insufficient permissions') {
-    super(message, 403, 'AUTHORIZATION_ERROR');
-  }
-}
-
-export class NotFoundError extends AppError {
-  constructor(message: string = 'Resource not found') {
-    super(message, 404, 'NOT_FOUND_ERROR');
-  }
-}
-
-export class ConflictError extends AppError {
+export class AuthenticationError extends Error {
   constructor(message: string) {
-    super(message, 409, 'CONFLICT_ERROR');
+    super(message);
+    this.name = 'AuthenticationError';
   }
 }
 
-export class RateLimitError extends AppError {
-  constructor(message: string = 'Too many requests') {
-    super(message, 429, 'RATE_LIMIT_ERROR');
-  }
-}
-
-// Error handler middleware
-export const errorHandler = (
-  error: Error,
-  req: Request,
+// Success response helper
+export const successResponse = (
   res: Response,
-  next: NextFunction
+  data: any,
+  message: string = 'Success',
+  status: number = 200
 ) => {
-  let statusCode = 500;
-  let code = 'INTERNAL_ERROR';
-  let message = 'Internal server error';
-  let details: any = null;
+  return res.status(status).json({
+    success: true,
+    message,
+    ...data
+  });
+};
 
-  // Log the error
-  logger.error('Error caught by error handler', {
-    error: error.message,
-    stack: error.stack,
-    url: req.url,
-    method: req.method,
-    ip: req.ip,
-    userAgent: req.get('User-Agent'),
-    userId: (req as any).user?.id
+// Async handler wrapper
+export const asyncHandler = (fn: Function) => (req: Request, res: Response, next: NextFunction) => {
+  Promise.resolve(fn(req, res, next)).catch(next);
+};
+
+// Global error handler
+export const errorHandler = (err: any, req: Request, res: Response, next: NextFunction) => {
+  logger.error('Error:', {
+    name: err.name,
+    message: err.message,
+    stack: err.stack,
+    path: req.path,
+    method: req.method
   });
 
-  // Handle different error types
-  if (error instanceof AppError) {
-    // Custom application errors
-    statusCode = error.statusCode;
-    code = error.code;
-    message = error.message;
-  } else if (error instanceof ZodError) {
-    // Zod validation errors
-    statusCode = 400;
-    code = 'VALIDATION_ERROR';
-    message = 'Validation failed';
-    details = error.errors.map(err => ({
-      field: err.path.join('.'),
+  // Handle specific error types
+  if (err instanceof ValidationError) {
+    return res.status(400).json({
+      success: false,
       message: err.message,
-      code: err.code
-    }));
-  } else if (error.name === 'PrismaClientKnownRequestError') {
-    // Prisma database errors
-    statusCode = 400;
-    code = 'DATABASE_ERROR';
-    
-    const prismaError = error as any;
-    switch (prismaError.code) {
-      case 'P2002':
-        message = 'A unique constraint violation occurred';
-        code = 'DUPLICATE_ERROR';
-        statusCode = 409;
-        break;
-      case 'P2025':
-        message = 'Record not found';
-        code = 'NOT_FOUND_ERROR';
-        statusCode = 404;
-        break;
-      case 'P2003':
-        message = 'Foreign key constraint violation';
-        code = 'FOREIGN_KEY_ERROR';
-        break;
+      error: 'Validation Error'
+    });
+  }
+
+  if (err instanceof NotFoundError) {
+    return res.status(404).json({
+      success: false,
+      message: err.message,
+      error: 'Not Found'
+    });
+  }
+
+  if (err instanceof AuthenticationError) {
+    return res.status(401).json({
+      success: false,
+      message: err.message,
+      error: 'Authentication Error'
+    });
+  }
+
+  if (err instanceof ZodError) {
+    return res.status(400).json({
+      success: false,
+      message: 'Validation failed',
+      errors: err.errors.map(e => ({
+        field: e.path.join('.'),
+        message: e.message
+      }))
+    });
+  }
+
+  // Handle Prisma errors
+  if (err instanceof Prisma.PrismaClientKnownRequestError) {
+    switch (err.code) {
+      case 'P2002': // Unique constraint violation
+        return res.status(409).json({
+          success: false,
+          message: 'A record with this value already exists',
+          error: 'Duplicate Entry'
+        });
+      case 'P2025': // Record not found
+        return res.status(404).json({
+          success: false,
+          message: 'Record not found',
+          error: 'Not Found'
+        });
       default:
-        message = 'Database operation failed';
-    }
-  } else if (error.name === 'PrismaClientValidationError') {
-    // Prisma validation errors
-    statusCode = 400;
-    code = 'VALIDATION_ERROR';
-    message = 'Invalid data provided';
-  } else if (error.name === 'JsonWebTokenError') {
-    // JWT errors
-    statusCode = 401;
-    code = 'INVALID_TOKEN';
-    message = 'Invalid authentication token';
-  } else if (error.name === 'TokenExpiredError') {
-    // JWT expiration
-    statusCode = 401;
-    code = 'TOKEN_EXPIRED';
-    message = 'Authentication token has expired';
-  } else if (error.name === 'MulterError') {
-    // File upload errors
-    statusCode = 400;
-    code = 'FILE_UPLOAD_ERROR';
-    message = 'File upload failed';
-    
-    if (error.message.includes('File too large')) {
-      message = 'File size exceeds the maximum limit';
-    } else if (error.message.includes('Unexpected field')) {
-      message = 'Invalid file field name';
+        return res.status(500).json({
+          success: false,
+          message: 'Database operation failed',
+          error: 'Database Error'
+        });
     }
   }
 
-  // Don't expose internal errors in production
-  if (statusCode === 500 && process.env.NODE_ENV === 'production') {
-    message = 'Internal server error';
-    details = null;
-  }
-
-  // Send error response
-  const errorResponse: any = {
+  // Handle unknown errors
+  return res.status(500).json({
     success: false,
-    error: {
-      code,
-      message
-    },
-    timestamp: new Date().toISOString(),
-    path: req.url,
-    method: req.method
-  };
-
-  if (details) {
-    errorResponse.error.details = details;
-  }
-
-  // Add request ID if available
-  if ((req as any).requestId) {
-    errorResponse.requestId = (req as any).requestId;
-  }
-
-  res.status(statusCode).json(errorResponse);
+    message: 'An unexpected error occurred',
+    error: 'Internal Server Error'
+  });
 };
 
 // 404 handler
 export const notFoundHandler = (req: Request, res: Response, next: NextFunction) => {
   const error = new NotFoundError(`Route ${req.method} ${req.url} not found`);
   next(error);
-};
-
-// Async error wrapper
-export const asyncHandler = (fn: Function) => {
-  return (req: Request, res: Response, next: NextFunction) => {
-    Promise.resolve(fn(req, res, next)).catch(next);
-  };
-};
-
-// Success response helper
-export const successResponse = (
-  res: Response,
-  data: any = null,
-  message: string = 'Success',
-  statusCode: number = 200
-) => {
-  res.status(statusCode).json({
-    success: true,
-    message,
-    data,
-    timestamp: new Date().toISOString()
-  });
 };
 
 // Pagination response helper
